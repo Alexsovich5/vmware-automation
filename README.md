@@ -1,13 +1,13 @@
 # VMware vSphere Infrastructure Automation
 
-## Project Overview
 Automated VMware vSphere infrastructure management using PowerCLI and PowerShell.
 
-**Timeline**: February 2014 - May 2014  
-**Technology Stack**: VMware vSphere 5.5, PowerCLI, PowerShell, vCenter Server, ESXi  
-**Role**: IT Administrator - Etech Eritrea PLC
+> **Status: not implemented.** This repository holds design notes only — a sketch of what vSphere automation with PowerCLI would look like. There is no code here. It is kept as a written-up idea, not as a working project.
 
-## Features
+## Sketched scope
+
+Features the design called for, none of which are built:
+
 - Automated VM provisioning and deprovisioning
 - Resource optimization and capacity planning
 - Snapshot management and scheduling
@@ -16,21 +16,3 @@ Automated VMware vSphere infrastructure management using PowerCLI and PowerShell
 - Security hardening automation
 - Web-based management interface
 
-## Architecture
-- **PowerCLI Framework**: Core automation engine
-- **vCenter Integration**: Centralized management
-- **Resource Optimizer**: Automatic resource allocation
-- **Monitoring Module**: Performance tracking
-- **Web Interface**: User-friendly dashboard
-
-## Setup
-```powershell
-# Install PowerCLI
-Install-Module VMware.PowerCLI
-
-# Configure vCenter connection
-.\config\Connect-vCenter.ps1
-
-# Deploy automation scripts
-.\scripts\Deploy-Automation.ps1
-```
