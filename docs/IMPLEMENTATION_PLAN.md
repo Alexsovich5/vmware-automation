@@ -404,7 +404,7 @@ settings and services; non-compliant items can be fixed with WhatIf.
   - runs capacity, rightsizing, alerts, hardening and a snapshot-age section from `Get-VASnapshotAge` (read-only, so no "What if:" output);
   - writes `report.html` and `alerts.csv` under the config's `outputDir`;
   - calls `Send-VAAlertMail`;
-  - exits 2, 1 or 0.
+  - exits 2, 1 or 0, and 3 (UNKNOWN) when the check itself fails, because an unhandled error would otherwise exit 1 and look like a warning.
 - create `test/unit/Export-VAHtmlReport.tests.ps1`, `test/integration/HealthCheck.tests.ps1`.
 
 **Tests to write first:**
@@ -414,6 +414,7 @@ settings and services; non-compliant items can be fixed with WhatIf.
 - Integration: the script against the fixture exits 2 (`esx03.lab.local` is critical) and, run with `-ConfigPath` set to the path returned by `New-FakeViState`, writes `$TestDrive/out/report.html` containing `esx03.lab.local`.
 - Integration: with `New-FakeViState -Mutate` lowering `esx03`'s realtime memory samples below warning, the script exits 1 (the `ds-sata02` warning remains).
 - Integration: with the host samples lowered and `ds-sata02` free space raised above 20%, the script exits 0.
+- Integration: a missing config file makes the script exit 3 with an UNKNOWN line.
 
 **Acceptance:** `make test`
 
