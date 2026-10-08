@@ -1,6 +1,20 @@
 name: vmware-automation
 
 services:
+  demo:
+    build: .
+    image: vmware-automation:dev
+    platform: linux/amd64
+    volumes:
+      - .:/work
+    environment:
+      TEMP: /tmp
+      VA_POWERCLI_MODULE: /work/simulator/FakePowerCLI/FakePowerCLI.psd1
+      FAKEVI_STATE: /tmp/fakevi-state.json
+      FAKEVI_NOW: "2014-03-15T02:00:00"
+      VA_VCENTER_PASSWORD: "VMware1!"
+    command: ["pwsh", "-NoProfile", "-NonInteractive", "-File", "scripts/Invoke-Demo.ps1"]
+
   tests:
     build: .
     image: vmware-automation:dev
