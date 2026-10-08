@@ -1,0 +1,64 @@
+{
+  "vCenter": {
+    "server": "vcsa.lab.local",
+    "user": "administrator@vsphere.local",
+    "password": "VMware1!",
+    "port": 443,
+    "version": "5.5.0",
+    "build": "1623101"
+  },
+  "datacenters": [
+    { "name": "Lab-DC", "id": "Datacenter-datacenter-2" }
+  ],
+  "clusters": [
+    { "name": "Lab-Cluster", "id": "ClusterComputeResource-domain-c7", "datacenter": "Lab-DC", "haEnabled": true, "drsEnabled": false }
+  ],
+  "hosts": [
+    { "name": "esx01.lab.local", "id": "HostSystem-host-10", "cluster": "Lab-Cluster", "connectionState": "Connected",
+      "numCpu": 12, "cpuMhzPerCore": 2600, "memoryTotalMB": 65536, "version": "5.5.0", "build": "1623387" },
+    { "name": "esx02.lab.local", "id": "HostSystem-host-11", "cluster": "Lab-Cluster", "connectionState": "Connected",
+      "numCpu": 12, "cpuMhzPerCore": 2600, "memoryTotalMB": 65536, "version": "5.5.0", "build": "1623387" },
+    { "name": "esx03.lab.local", "id": "HostSystem-host-12", "cluster": "Lab-Cluster", "connectionState": "Connected",
+      "numCpu": 16, "cpuMhzPerCore": 2600, "memoryTotalMB": 98304, "version": "5.5.0", "build": "1623387" }
+  ],
+  "datastores": [
+    { "name": "ds-ssd01",  "id": "Datastore-datastore-20", "type": "VMFS", "capacityGB": 500,  "freeSpaceGB": 180,
+      "hosts": [ "esx01.lab.local", "esx02.lab.local", "esx03.lab.local" ] },
+    { "name": "ds-sata01", "id": "Datastore-datastore-21", "type": "VMFS", "capacityGB": 2000, "freeSpaceGB": 700,
+      "hosts": [ "esx01.lab.local", "esx02.lab.local", "esx03.lab.local" ] },
+    { "name": "ds-sata02", "id": "Datastore-datastore-22", "type": "VMFS", "capacityGB": 1000, "freeSpaceGB": 150,
+      "hosts": [ "esx03.lab.local" ] }
+  ],
+  "templates": [
+    { "name": "tpl-centos65", "id": "VirtualMachine-vm-90", "datastore": "ds-sata01", "guestId": "centos64Guest",       "numCpu": 1, "memoryMB": 1024, "diskGB": 16 },
+    { "name": "tpl-w2k12r2",  "id": "VirtualMachine-vm-91", "datastore": "ds-sata01", "guestId": "windows8Server64Guest", "numCpu": 2, "memoryMB": 4096, "diskGB": 40 }
+  ],
+  "vms": [
+    { "name": "dc01",       "id": "VirtualMachine-vm-101", "host": "esx01.lab.local", "datastore": "ds-ssd01",  "powerState": "PoweredOn",
+      "numCpu": 1, "memoryMB": 4096,  "provisionedSpaceGB": 40,  "guestId": "windows8Server64Guest", "cpuUsageMhz": 310,  "notes": "domain controller" },
+    { "name": "web-01",     "id": "VirtualMachine-vm-102", "host": "esx01.lab.local", "datastore": "ds-sata01", "powerState": "PoweredOn",
+      "numCpu": 2, "memoryMB": 4096,  "provisionedSpaceGB": 16,  "guestId": "centos64Guest",         "cpuUsageMhz": 940,  "notes": "frontend" },
+    { "name": "test-01",    "id": "VirtualMachine-vm-103", "host": "esx01.lab.local", "datastore": "ds-sata01", "powerState": "PoweredOn",
+      "numCpu": 1, "memoryMB": 2048,  "provisionedSpaceGB": 16,  "guestId": "centos64Guest",         "cpuUsageMhz": 120,  "notes": "test box" },
+    { "name": "vcsa",       "id": "VirtualMachine-vm-104", "host": "esx02.lab.local", "datastore": "ds-ssd01",  "powerState": "PoweredOn",
+      "numCpu": 2, "memoryMB": 8192,  "provisionedSpaceGB": 125, "guestId": "sles11_64Guest",        "cpuUsageMhz": 1480, "notes": "vCenter Server Appliance" },
+    { "name": "web-02",     "id": "VirtualMachine-vm-105", "host": "esx02.lab.local", "datastore": "ds-sata01", "powerState": "PoweredOn",
+      "numCpu": 2, "memoryMB": 4096,  "provisionedSpaceGB": 16,  "guestId": "centos64Guest",         "cpuUsageMhz": 870,  "notes": "frontend" },
+    { "name": "app-idle01", "id": "VirtualMachine-vm-106", "host": "esx02.lab.local", "datastore": "ds-sata01", "powerState": "PoweredOn",
+      "numCpu": 4, "memoryMB": 16384, "provisionedSpaceGB": 40,  "guestId": "windows8Server64Guest", "cpuUsageMhz": 310,  "notes": "application server" },
+    { "name": "db01",       "id": "VirtualMachine-vm-107", "host": "esx03.lab.local", "datastore": "ds-ssd01",  "powerState": "PoweredOn",
+      "numCpu": 4, "memoryMB": 32768, "provisionedSpaceGB": 200, "guestId": "windows8Server64Guest", "cpuUsageMhz": 4160, "notes": "database server" },
+    { "name": "app01",      "id": "VirtualMachine-vm-108", "host": "esx03.lab.local", "datastore": "ds-sata02", "powerState": "PoweredOn",
+      "numCpu": 4, "memoryMB": 16384, "provisionedSpaceGB": 60,  "guestId": "windows8Server64Guest", "cpuUsageMhz": 2600, "notes": "application server" },
+    { "name": "rpt01",      "id": "VirtualMachine-vm-109", "host": "esx03.lab.local", "datastore": "ds-sata02", "powerState": "PoweredOn",
+      "numCpu": 2, "memoryMB": 12288, "provisionedSpaceGB": 80,  "guestId": "windows8Server64Guest", "cpuUsageMhz": 1150, "notes": "reporting server" },
+    { "name": "app-busy01", "id": "VirtualMachine-vm-110", "host": "esx03.lab.local", "datastore": "ds-sata01", "powerState": "PoweredOn",
+      "numCpu": 1, "memoryMB": 8192,  "provisionedSpaceGB": 40,  "guestId": "windows8Server64Guest", "cpuUsageMhz": 2290, "notes": "application server" },
+    { "name": "app03",      "id": "VirtualMachine-vm-111", "host": "esx03.lab.local", "datastore": "ds-sata01", "powerState": "PoweredOn",
+      "numCpu": 2, "memoryMB": 8192,  "provisionedSpaceGB": 40,  "guestId": "windows8Server64Guest", "cpuUsageMhz": 1250, "notes": "application server" },
+    { "name": "build01",    "id": "VirtualMachine-vm-112", "host": "esx03.lab.local", "datastore": "ds-sata01", "powerState": "PoweredOn",
+      "numCpu": 2, "memoryMB": 8192,  "provisionedSpaceGB": 60,  "guestId": "centos64Guest",         "cpuUsageMhz": 1820, "notes": "build server" },
+    { "name": "old-01",     "id": "VirtualMachine-vm-113", "host": "esx03.lab.local", "datastore": "ds-sata02", "powerState": "PoweredOff",
+      "numCpu": 2, "memoryMB": 8192,  "provisionedSpaceGB": 40,  "guestId": "windows7Server64Guest", "cpuUsageMhz": 0,    "notes": "retired" }
+  ]
+}
