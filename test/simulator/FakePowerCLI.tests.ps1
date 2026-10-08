@@ -339,7 +339,11 @@ Describe 'FakePowerCLI' {
         Reset-FakeViSession
         $null = New-FakeViState -Mutate {
             param($state)
-            $state.stats = @(@($state.stats) + (New-Object psobject -Property @{
+            # Replace the fixture's esx01 realtime CPU series with known values.
+            $kept = @($state.stats | Where-Object {
+                -not ($_.entity -eq 'esx01.lab.local' -and $_.stat -eq 'cpu.usage.average' -and [int]$_.intervalSecs -eq 20)
+            })
+            $state.stats = @($kept + (New-Object psobject -Property @{
                 entity = 'esx01.lab.local'; stat = 'cpu.usage.average'; unit = '%'; intervalSecs = 20; offsetMins = 0
                 values = @(41, 42, 43, 44, 45, 46, 47, 48)
             }))
