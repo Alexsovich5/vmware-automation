@@ -25,7 +25,7 @@ Describe 'FakePowerCLI' {
 
         It 'exports the inventory and connection cmdlets' {
             foreach ($name in @('Connect-VIServer', 'Disconnect-VIServer', 'Get-Cluster', 'Get-VMHost',
-                                'Get-VM', 'Get-Template', 'Get-Datastore')) {
+                                'Get-VM', 'Get-Template', 'Get-Datastore', 'New-VM', 'Set-VM', 'Start-VM')) {
                 ($exported -contains $name) | Should Be $true
             }
         }
@@ -205,6 +205,79 @@ Describe 'FakePowerCLI' {
         }
         It 'Get-Datastore -VMHost esx03 also returns ds-sata02' {
             @(FakePowerCLI\Get-Datastore -VMHost $esx03).Count | Should Be 3
+        }
+        Reset-FakeViSession
+    }
+
+    Context 'provisioning cmdlets' {
+        Reset-FakeViSession
+        $null = New-FakeViState
+        Import-Module $manifest -Force
+        $null = Connect-FakeLab
+
+        $created = FakePowerCLI\New-VM -Name 'web-03' -Template 'tpl-centos65' -VMHost 'esx01.lab.local' -Datastore 'ds-sata01'
+
+        It 'New-VM clones a powered-off VM sized like the template' {
+            $created.Name | Should Be 'web-03'
+            $created.PowerState | Should Be 'PoweredOff'
+            $created.NumCpu | Should Be 1
+            $created.MemoryMB | Should Be 1024
+            $created.ProvisionedSpaceGB | Should Be 16
+            $created.VMHost.Name | Should Be 'esx01.lab.local'
+        }
+        It 'New-VM gives the VM a new id' {
+            $ids = @(FakePowerCLI\Get-VM | ForEach-Object { $_.Id })
+            @($ids | Where-Object { $_ -eq $created.Id }).Count | Should Be 1
+        }
+        It 'New-VM takes the template disk from the datastore free space' {
+            (FakePowerCLI\Get-Datastore -Name 'ds-sata01').FreeSpaceGB | Should Be 684
+        }
+        It 'New-VM keeps the VM after the call (state is saved)' {
+            (FakePowerCLI\Get-VM -Name 'web-03').VMHost.Name | Should Be 'esx01.lab.local'
+        }
+        It 'New-VM refuses a duplicate name' {
+            { FakePowerCLI\New-VM -Name 'web-03' -Template 'tpl-centos65' -VMHost 'esx01.lab.local' -Datastore 'ds-sata01' } |
+                Should Throw 'already exists'
+        }
+        It 'New-VM refuses an unknown template' {
+            { FakePowerCLI\New-VM -Name 'web-09' -Template 'tpl-none' -VMHost 'esx01.lab.local' -Datastore 'ds-sata01' } |
+                Should Throw 'tpl-none'
+        }
+        It 'New-VM refuses a datastore the host does not mount' {
+            { FakePowerCLI\New-VM -Name 'web-09' -Template 'tpl-centos65' -VMHost 'esx01.lab.local' -Datastore 'ds-sata02' } |
+                Should Throw 'ds-sata02'
+        }
+
+        $sized = FakePowerCLI\Set-VM -VM $created -NumCpu 2 -MemoryMB 4096 -Notes 'frontend' -Confirm:$false
+
+        It 'Set-VM changes vCPU, memory and notes' {
+            $sized.NumCpu | Should Be 2
+            $sized.MemoryMB | Should Be 4096
+            $sized.Notes | Should Be 'frontend'
+            (FakePowerCLI\Get-VM -Name 'web-03').MemoryMB | Should Be 4096
+        }
+        It 'a powered-off VM does not count towards host memory' {
+            (FakePowerCLI\Get-VMHost -Name 'esx01.lab.local').MemoryUsageGB | Should Be 10
+        }
+
+        $started = FakePowerCLI\Start-VM -VM 'web-03'
+
+        It 'Start-VM powers the VM on and returns it' {
+            $started.Name | Should Be 'web-03'
+            $started.PowerState | Should Be 'PoweredOn'
+            (FakePowerCLI\Get-VM -Name 'web-03').PowerState | Should Be 'PoweredOn'
+        }
+        It 'a powered-on VM counts towards host memory' {
+            (FakePowerCLI\Get-VMHost -Name 'esx01.lab.local').MemoryUsageGB | Should Be 14
+        }
+
+        $before = (Get-FileHash -Path $env:FAKEVI_STATE -Algorithm SHA256).Hash
+        $null = FakePowerCLI\New-VM -Name 'web-05' -Template 'tpl-centos65' -VMHost 'esx01.lab.local' -Datastore 'ds-sata01' -WhatIf
+        $null = FakePowerCLI\Set-VM -VM 'web-03' -NumCpu 4 -WhatIf
+        $null = FakePowerCLI\Start-VM -VM 'old-01' -WhatIf
+
+        It 'the provisioning cmdlets honour -WhatIf' {
+            (Get-FileHash -Path $env:FAKEVI_STATE -Algorithm SHA256).Hash | Should Be $before
         }
         Reset-FakeViSession
     }

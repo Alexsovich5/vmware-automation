@@ -461,6 +461,204 @@ function Get-Datastore {
     }
 }
 
+# ---------------------------------------------------------------------------------------------
+# Provisioning cmdlets
+# ---------------------------------------------------------------------------------------------
+
+# Returns the state records for -VM arguments given as names or VM objects; writes PowerCLI's
+# "Could not find" error for names that are not in the inventory.
+function Get-FakeViVMRecord {
+    param(
+        [psobject]$State,
+        [object[]]$VM
+    )
+    foreach ($name in (Get-FakeViName $VM)) {
+        $record = @($State.vms | Where-Object { $_.name -eq $name })
+        if ($record.Count -eq 0) {
+            Write-Error -Message ("Could not find VirtualMachine with name '{0}'." -f $name) -Category ObjectNotFound -TargetObject $name
+            continue
+        }
+        $record[0]
+    }
+}
+
+# Next free "VirtualMachine-vm-<n>" id across VMs and templates.
+function New-FakeViVMId {
+    param([psobject]$State)
+    $max = 0
+    foreach ($item in @(@($State.vms) + @($State.templates))) {
+        if ($item -and $item.id -match '-vm-(\d+)$') {
+            $n = [int]$Matches[1]
+            if ($n -gt $max) { $max = $n }
+        }
+    }
+    'VirtualMachine-vm-{0}' -f ($max + 1)
+}
+
+function New-VM {
+    [CmdletBinding(SupportsShouldProcess=$true)]
+    param(
+        [Parameter(Position=0)]
+        [string]$Name,
+        [object]$VMHost,
+        [object]$ResourcePool,
+        [object]$Location,
+        [object]$Datastore,
+        [object]$Template,
+        [object]$VM,
+        [int]$NumCpu,
+        [long]$MemoryMB,
+        [decimal]$MemoryGB,
+        [decimal[]]$DiskGB,
+        [long[]]$DiskMB,
+        [string]$DiskStorageFormat,
+        [object]$OSCustomizationSpec,
+        [string]$GuestId,
+        [string]$Version,
+        [string[]]$NetworkName,
+        [string]$Notes,
+        [switch]$RunAsync,
+        [object[]]$Server
+    )
+
+    Assert-FakeViConnected
+    $state = Get-FakeViState
+
+    if (-not $Template) {
+        throw 'FakePowerCLI: New-VM supports cloning from -Template only.'
+    }
+    $templateName = @(Get-FakeViName $Template)[0]
+    $templateRecord = @($state.templates | Where-Object { $_.name -eq $templateName })
+    if ($templateRecord.Count -eq 0) {
+        throw ("Could not find Template with name '{0}'." -f $templateName)
+    }
+    $templateRecord = $templateRecord[0]
+
+    if (@($state.vms | Where-Object { $_.name -eq $Name }).Count -gt 0) {
+        throw ("The specified key, name, or identifier '{0}' already exists." -f $Name)
+    }
+
+    $hostName = @(Get-FakeViName $VMHost)[0]
+    $hostRecord = @($state.hosts | Where-Object { $_.name -eq $hostName })
+    if (-not $hostName -or $hostRecord.Count -eq 0) {
+        throw ("Could not find VMHost with name '{0}'." -f $hostName)
+    }
+
+    $dsName = $templateRecord.datastore
+    if ($Datastore) {
+        $dsName = @(Get-FakeViName $Datastore)[0]
+    }
+    $dsRecord = @($state.datastores | Where-Object { $_.name -eq $dsName })
+    if ($dsRecord.Count -eq 0) {
+        throw ("Could not find Datastore with name '{0}'." -f $dsName)
+    }
+    $dsRecord = $dsRecord[0]
+    if (-not (@($dsRecord.hosts) -contains $hostName)) {
+        throw ("Datastore '{0}' is not accessible from host '{1}'." -f $dsName, $hostName)
+    }
+    $templateDiskGB = [decimal]$templateRecord.diskGB
+    if ([decimal]$dsRecord.freeSpaceGB -lt $templateDiskGB) {
+        throw ("Insufficient disk space on datastore '{0}'." -f $dsName)
+    }
+
+    if (-not $PSCmdlet.ShouldProcess($hostName, ("Create VM '{0}' from template '{1}'" -f $Name, $templateName))) {
+        return
+    }
+
+    $record = New-Object psobject -Property ([ordered]@{
+        name               = $Name
+        id                 = New-FakeViVMId -State $state
+        host               = $hostName
+        datastore          = $dsName
+        powerState         = 'PoweredOff'
+        numCpu             = [int]$templateRecord.numCpu
+        memoryMB           = [int]$templateRecord.memoryMB
+        provisionedSpaceGB = $templateDiskGB
+        guestId            = $templateRecord.guestId
+        cpuUsageMhz        = 0
+        notes              = $(if ($Notes) { $Notes } else { '' })
+    })
+    $state.vms = @(@($state.vms) + $record)
+    $dsRecord.freeSpaceGB = [decimal]$dsRecord.freeSpaceGB - $templateDiskGB
+    Save-FakeViState -State $state
+
+    ConvertTo-FakeViVM -State $state -Record $record
+}
+
+function Set-VM {
+    [CmdletBinding(SupportsShouldProcess=$true, ConfirmImpact='Medium')]
+    param(
+        [Parameter(Position=0, ValueFromPipeline=$true)]
+        [object[]]$VM,
+        [string]$Name,
+        [int]$NumCpu,
+        [long]$MemoryMB,
+        [decimal]$MemoryGB,
+        [string]$Notes,
+        [string]$GuestId,
+        [string]$Version,
+        [object]$OSCustomizationSpec,
+        [object]$Snapshot,
+        [switch]$ToTemplate,
+        [switch]$RunAsync,
+        [object[]]$Server
+    )
+
+    process {
+        Assert-FakeViConnected
+        $state = Get-FakeViState
+        $changed = $false
+        $records = @(Get-FakeViVMRecord -State $state -VM $VM)
+        foreach ($record in $records) {
+            if (-not $PSCmdlet.ShouldProcess($record.name, 'Reconfigure VM')) {
+                continue
+            }
+            if ($PSBoundParameters.ContainsKey('NumCpu')) { $record.numCpu = $NumCpu }
+            if ($PSBoundParameters.ContainsKey('MemoryMB')) { $record.memoryMB = [int]$MemoryMB }
+            if ($PSBoundParameters.ContainsKey('MemoryGB')) { $record.memoryMB = [int]($MemoryGB * 1024) }
+            if ($PSBoundParameters.ContainsKey('Notes')) { $record.notes = $Notes }
+            if ($PSBoundParameters.ContainsKey('Name')) { $record.name = $Name }
+            $changed = $true
+        }
+        if ($changed) {
+            Save-FakeViState -State $state
+            foreach ($record in $records) {
+                ConvertTo-FakeViVM -State $state -Record $record
+            }
+        }
+    }
+}
+
+function Start-VM {
+    [CmdletBinding(SupportsShouldProcess=$true)]
+    param(
+        [Parameter(Position=0, ValueFromPipeline=$true)]
+        [object[]]$VM,
+        [switch]$RunAsync,
+        [object[]]$Server
+    )
+
+    process {
+        Assert-FakeViConnected
+        $state = Get-FakeViState
+        $changed = $false
+        $records = @(Get-FakeViVMRecord -State $state -VM $VM)
+        foreach ($record in $records) {
+            if (-not $PSCmdlet.ShouldProcess($record.name, 'Power on VM')) {
+                continue
+            }
+            $record.powerState = 'PoweredOn'
+            $changed = $true
+        }
+        if ($changed) {
+            Save-FakeViState -State $state
+            foreach ($record in $records) {
+                ConvertTo-FakeViVM -State $state -Record $record
+            }
+        }
+    }
+}
+
 Export-ModuleMember -Function @(
     'Connect-VIServer',
     'Disconnect-VIServer',
@@ -468,5 +666,8 @@ Export-ModuleMember -Function @(
     'Get-VMHost',
     'Get-VM',
     'Get-Template',
-    'Get-Datastore'
+    'Get-Datastore',
+    'New-VM',
+    'Set-VM',
+    'Start-VM'
 )

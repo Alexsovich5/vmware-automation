@@ -11,7 +11,10 @@
         'Get-VMHost',
         'Get-VM',
         'Get-Template',
-        'Get-Datastore'
+        'Get-Datastore',
+        'New-VM',
+        'Set-VM',
+        'Start-VM'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()
