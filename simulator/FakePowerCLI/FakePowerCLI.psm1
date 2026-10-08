@@ -731,6 +731,138 @@ function Remove-VM {
     }
 }
 
+# ---------------------------------------------------------------------------------------------
+# Performance statistics
+# ---------------------------------------------------------------------------------------------
+
+# The simulated "now": [datetime]$env:FAKEVI_NOW when set, else the current time.
+function Get-FakeViNow {
+    if ($env:FAKEVI_NOW) {
+        return [datetime]$env:FAKEVI_NOW
+    }
+    Get-Date
+}
+
+# Builds the Entity object of a sample: the VM or host with that name, or a bare named object.
+function ConvertTo-FakeViStatEntity {
+    param(
+        [psobject]$State,
+        [string]$Name
+    )
+    $vm = @($State.vms | Where-Object { $_.name -eq $Name })
+    if ($vm.Count -gt 0) {
+        return ConvertTo-FakeViVM -State $State -Record $vm[0]
+    }
+    $vmHost = @($State.hosts | Where-Object { $_.name -eq $Name })
+    if ($vmHost.Count -gt 0) {
+        return ConvertTo-FakeViVMHost -State $State -Record $vmHost[0]
+    }
+    New-Object psobject -Property @{ Name = $Name }
+}
+
+# Serves samples from the state's "stats" series. Each series holds one entity and metric:
+# "values" are newest first, the newest sample is "offsetMins" minutes from the simulated now,
+# and each older sample is "intervalSecs" earlier. Series with intervalSecs 20 are realtime and
+# are only returned with -Realtime; all others are historical rollups. Without -Start or
+# -Finish the window is open on that side. -MaxSamples keeps the newest samples per entity
+# and metric. Samples come back newest first, like PowerCLI.
+function Get-Stat {
+    [CmdletBinding()]
+    param(
+        [Parameter(Position=0, ValueFromPipeline=$true)]
+        [object[]]$Entity,
+        [string[]]$Stat,
+        [datetime]$Start,
+        [datetime]$Finish,
+        [int]$MaxSamples,
+        [int[]]$IntervalMins,
+        [int[]]$IntervalSecs,
+        [string[]]$Instance,
+        [switch]$Realtime,
+        [switch]$Common,
+        [switch]$Cpu,
+        [switch]$Memory,
+        [switch]$Disk,
+        [switch]$Network,
+        [object[]]$Server
+    )
+
+    begin {
+        $entityNames = @()
+    }
+    process {
+        $entityNames += @(Get-FakeViName $Entity)
+    }
+    end {
+        Assert-FakeViConnected
+        $state = Get-FakeViState
+        $now = Get-FakeViNow
+
+        $series = @()
+        if ($state.PSObject.Properties['stats']) {
+            $series = @($state.stats)
+        }
+        if ($Realtime) {
+            $series = @($series | Where-Object { [int]$_.intervalSecs -eq 20 })
+        }
+        else {
+            $series = @($series | Where-Object { [int]$_.intervalSecs -ne 20 })
+        }
+        if ($IntervalMins) {
+            $seconds = @($IntervalMins | ForEach-Object { $_ * 60 })
+            $series = @($series | Where-Object { $seconds -contains [int]$_.intervalSecs })
+        }
+        if ($IntervalSecs) {
+            $series = @($series | Where-Object { $IntervalSecs -contains [int]$_.intervalSecs })
+        }
+        if ($Stat) {
+            $series = @($series | Where-Object { $Stat -contains $_.stat })
+        }
+
+        $entityCache = @{}
+        foreach ($name in $entityNames) {
+            foreach ($s in @($series | Where-Object { $_.entity -eq $name })) {
+                if (-not $entityCache.ContainsKey($name)) {
+                    $entityCache[$name] = ConvertTo-FakeViStatEntity -State $state -Name $name
+                }
+                $interval = [int]$s.intervalSecs
+                $newest = $now.AddMinutes([double]$s.offsetMins)
+                $values = @($s.values)
+                $emitted = 0
+                for ($i = 0; $i -lt $values.Count; $i++) {
+                    if ($MaxSamples -gt 0 -and $emitted -ge $MaxSamples) {
+                        break
+                    }
+                    $timestamp = $newest.AddSeconds(-1 * $i * $interval)
+                    if ($PSBoundParameters.ContainsKey('Finish') -and $timestamp -gt $Finish) {
+                        continue
+                    }
+                    if ($PSBoundParameters.ContainsKey('Start') -and $timestamp -lt $Start) {
+                        break
+                    }
+                    $unit = '%'
+                    if ($s.PSObject.Properties['unit'] -and $s.unit) {
+                        $unit = $s.unit
+                    }
+                    $sample = New-Object psobject -Property @{
+                        Value        = [single]$values[$i]
+                        Timestamp    = $timestamp
+                        MetricId     = $s.stat
+                        Unit         = $unit
+                        Instance     = ''
+                        IntervalSecs = $interval
+                        Entity       = $entityCache[$name]
+                        EntityId     = $entityCache[$name].Id
+                    }
+                    $sample.PSObject.TypeNames.Insert(0, 'VMware.VimAutomation.ViCore.Impl.V1.Stat.FloatSampleImpl')
+                    $sample
+                    $emitted++
+                }
+            }
+        }
+    }
+}
+
 Export-ModuleMember -Function @(
     'Connect-VIServer',
     'Disconnect-VIServer',
@@ -743,5 +875,6 @@ Export-ModuleMember -Function @(
     'Set-VM',
     'Start-VM',
     'Stop-VM',
-    'Remove-VM'
+    'Remove-VM',
+    'Get-Stat'
 )

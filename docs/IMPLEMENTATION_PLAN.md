@@ -233,8 +233,9 @@ process each row independently and write a result CSV.
 - create `src/VMwareAutomation/Public/Get-VACapacityReport.ps1`.
 - create `src/VMwareAutomation/Public/Find-VARightSizingCandidate.ps1`.
 - modify the simulator: add `Get-Stat -Entity -Stat -Start -Finish -IntervalMins -MaxSamples -Realtime`, served from fixture `stats`. Sample times are minute offsets from `$env:FAKEVI_NOW`; `-Realtime` returns the newest 20-second samples.
+  Each fixture `stats` entry is one entity and metric: `values` newest first, the newest sample at `offsetMins` from `$env:FAKEVI_NOW` and each older one `intervalSecs` earlier (7200 for the 2-hour history, 20 for realtime series). Simulator tests for `Get-Stat` go in `test/simulator/FakePowerCLI.tests.ps1`.
 - modify the fixture with 7 days of historical samples (offsets 0 to -10080 minutes) for every powered-on VM: `app-idle01` (4 vCPU) idle at CPU ~3% avg / 12% peak and memory ~10% avg; `app-busy01` (1 vCPU) at CPU ~88% avg and memory ~50%; others in the normal range.
-- modify `test/stubs/PowerCLI.Stubs.ps1`: `Get-Stat` gets the same parameters, including `-Realtime`.
+- `test/stubs/PowerCLI.Stubs.ps1`: `Get-Stat` already has these parameters, including `-Realtime` (added in T3), so it needs no change.
 - create `test/unit/Get-VAStatSummary.tests.ps1`, `test/unit/Get-VACapacityReport.tests.ps1`, `test/unit/Find-VARightSizingCandidate.tests.ps1`, `test/integration/Capacity.tests.ps1`.
 
 **Tests to write first:**

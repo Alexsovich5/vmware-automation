@@ -26,7 +26,7 @@ Describe 'FakePowerCLI' {
         It 'exports the inventory and connection cmdlets' {
             foreach ($name in @('Connect-VIServer', 'Disconnect-VIServer', 'Get-Cluster', 'Get-VMHost',
                                 'Get-VM', 'Get-Template', 'Get-Datastore', 'New-VM', 'Set-VM', 'Start-VM',
-                                'Stop-VM', 'Remove-VM')) {
+                                'Stop-VM', 'Remove-VM', 'Get-Stat')) {
                 ($exported -contains $name) | Should Be $true
             }
         }
@@ -330,6 +330,86 @@ Describe 'FakePowerCLI' {
         }
         It 'Remove-VM writes the not-found error for an unknown VM' {
             { FakePowerCLI\Remove-VM -VM 'nope-01' -Confirm:$false -ErrorAction Stop } | Should Throw 'nope-01'
+        }
+        Reset-FakeViSession
+    }
+
+    Context 'performance statistics' {
+        Reset-FakeViSession
+        $null = New-FakeViState -Mutate {
+            param($state)
+            $state.stats = @(@($state.stats) + (New-Object psobject -Property @{
+                entity = 'esx01.lab.local'; stat = 'cpu.usage.average'; unit = '%'; intervalSecs = 20; offsetMins = 0
+                values = @(41, 42, 43, 44, 45, 46, 47, 48)
+            }))
+        }
+        Import-Module $manifest -Force
+        $now = [datetime]$env:FAKEVI_NOW
+
+        It 'throws the not-connected error before connecting' {
+            { FakePowerCLI\Get-Stat -Entity 'app-idle01' -Stat 'cpu.usage.average' } | Should Throw 'You are not currently connected to any servers'
+        }
+
+        $null = Connect-FakeLab
+        $vms = @(FakePowerCLI\Get-VM | Where-Object { $_.PowerState -eq 'PoweredOn' })
+        $week = @(FakePowerCLI\Get-Stat -Entity 'app-idle01' -Stat 'cpu.usage.average' -Start $now.AddDays(-7) -Finish $now)
+
+        It 'has 7 days of 2-hour samples for app-idle01, newest first' {
+            $week.Count | Should Be 85
+            $week[0].Timestamp | Should Be $now
+            $week[84].Timestamp | Should Be $now.AddMinutes(-10080)
+            ($week[0].Timestamp -gt $week[1].Timestamp) | Should Be $true
+        }
+        It 'returns PowerCLI-shaped samples' {
+            $week[0].MetricId | Should Be 'cpu.usage.average'
+            $week[0].Unit | Should Be '%'
+            $week[0].IntervalSecs | Should Be 7200
+            $week[0].Entity.Name | Should Be 'app-idle01'
+            $week[0].Instance | Should Be ''
+        }
+        It 'has cpu and memory history for every powered-on VM' {
+            $all = @(FakePowerCLI\Get-Stat -Entity $vms -Stat 'cpu.usage.average', 'mem.usage.average' -Start $now.AddDays(-7) -Finish $now)
+            $all.Count | Should Be ($vms.Count * 2 * 85)
+        }
+        It 'has no history for powered-off VMs' {
+            @(FakePowerCLI\Get-Stat -Entity 'old-01' -Stat 'cpu.usage.average' -Start $now.AddDays(-7) -Finish $now).Count | Should Be 0
+        }
+        It 'limits samples to the -Start/-Finish window' {
+            @(FakePowerCLI\Get-Stat -Entity 'app-idle01' -Stat 'cpu.usage.average' -Start $now.AddDays(-1) -Finish $now).Count | Should Be 13
+            @(FakePowerCLI\Get-Stat -Entity 'app-idle01' -Stat 'cpu.usage.average' -Start $now.AddDays(1) -Finish $now.AddDays(2)).Count | Should Be 0
+        }
+        It 'filters by -Stat' {
+            $mem = @(FakePowerCLI\Get-Stat -Entity 'app-busy01' -Stat 'mem.usage.average' -Start $now.AddDays(-7) -Finish $now)
+            $mem.Count | Should Be 85
+            @($mem | Where-Object { $_.MetricId -ne 'mem.usage.average' }).Count | Should Be 0
+        }
+        It 'returns the newest samples with -MaxSamples' {
+            $few = @(FakePowerCLI\Get-Stat -Entity 'app-idle01' -Stat 'cpu.usage.average' -MaxSamples 3)
+            $few.Count | Should Be 3
+            $few[0].Timestamp | Should Be $now
+            $few[2].Timestamp | Should Be $now.AddMinutes(-240)
+        }
+        It 'filters by -IntervalMins' {
+            @(FakePowerCLI\Get-Stat -Entity 'app-idle01' -Stat 'cpu.usage.average' -IntervalMins 120 -MaxSamples 5).Count | Should Be 5
+            @(FakePowerCLI\Get-Stat -Entity 'app-idle01' -Stat 'cpu.usage.average' -IntervalMins 5).Count | Should Be 0
+        }
+        It 'returns the newest 20-second samples with -Realtime' {
+            $rt = @(FakePowerCLI\Get-Stat -Entity 'esx01.lab.local' -Stat 'cpu.usage.average' -Realtime -MaxSamples 3)
+            $rt.Count | Should Be 3
+            (@($rt | ForEach-Object { $_.Value }) -join ',') | Should Be '41,42,43'
+            $rt[0].Timestamp | Should Be $now
+            $rt[2].Timestamp | Should Be $now.AddSeconds(-40)
+            $rt[0].IntervalSecs | Should Be 20
+            $rt[0].Entity.Name | Should Be 'esx01.lab.local'
+        }
+        It 'keeps realtime and historical samples apart' {
+            @(FakePowerCLI\Get-Stat -Entity 'esx01.lab.local' -Stat 'cpu.usage.average' -Start $now.AddDays(-7) -Finish $now).Count | Should Be 0
+            @(FakePowerCLI\Get-Stat -Entity 'app-idle01' -Stat 'cpu.usage.average' -Realtime).Count | Should Be 0
+        }
+        It 'does not change the state file' {
+            $before = (Get-FileHash -Path $env:FAKEVI_STATE -Algorithm SHA256).Hash
+            $null = FakePowerCLI\Get-Stat -Entity $vms -Stat 'cpu.usage.average' -MaxSamples 1
+            (Get-FileHash -Path $env:FAKEVI_STATE -Algorithm SHA256).Hash | Should Be $before
         }
         Reset-FakeViSession
     }
