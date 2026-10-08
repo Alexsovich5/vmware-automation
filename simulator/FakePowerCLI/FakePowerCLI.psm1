@@ -735,6 +735,46 @@ function Remove-VM {
     }
 }
 
+# vMotion: moves the VM record to another host in the inventory. Host memory usage is derived
+# from the VMs on each host, so Get-VMHost follows; Get-Stat samples are fixture data and do not.
+function Move-VM {
+    [CmdletBinding(SupportsShouldProcess=$true)]
+    param(
+        [Parameter(Position=0, ValueFromPipeline=$true)]
+        [object[]]$VM,
+        [object]$Destination,
+        [object]$Datastore,
+        [string]$DiskStorageFormat,
+        [switch]$RunAsync,
+        [object[]]$Server
+    )
+
+    process {
+        Assert-FakeViConnected
+        $state = Get-FakeViState
+        $hostName = @(Get-FakeViName @($Destination))[0]
+        $hostRecord = @($state.hosts | Where-Object { $_.name -eq $hostName })
+        if ($hostRecord.Count -eq 0) {
+            throw ("Could not find VMHost with name '{0}'." -f $hostName)
+        }
+        $changed = $false
+        $records = @(Get-FakeViVMRecord -State $state -VM $VM)
+        foreach ($record in $records) {
+            if (-not $PSCmdlet.ShouldProcess($record.name, ("Migrate VM to host '{0}'" -f $hostName))) {
+                continue
+            }
+            $record.host = $hostRecord[0].name
+            $changed = $true
+        }
+        if ($changed) {
+            Save-FakeViState -State $state
+            foreach ($record in $records) {
+                ConvertTo-FakeViVM -State $state -Record $record
+            }
+        }
+    }
+}
+
 # ---------------------------------------------------------------------------------------------
 # Performance statistics
 # ---------------------------------------------------------------------------------------------
@@ -1074,6 +1114,7 @@ Export-ModuleMember -Function @(
     'Start-VM',
     'Stop-VM',
     'Remove-VM',
+    'Move-VM',
     'Get-Stat',
     'Get-Snapshot',
     'New-Snapshot',

@@ -26,7 +26,7 @@ Describe 'FakePowerCLI' {
         It 'exports the inventory and connection cmdlets' {
             foreach ($name in @('Connect-VIServer', 'Disconnect-VIServer', 'Get-Cluster', 'Get-VMHost',
                                 'Get-VM', 'Get-Template', 'Get-Datastore', 'New-VM', 'Set-VM', 'Start-VM',
-                                'Stop-VM', 'Remove-VM', 'Get-Stat', 'Get-Snapshot', 'New-Snapshot',
+                                'Stop-VM', 'Remove-VM', 'Move-VM', 'Get-Stat', 'Get-Snapshot', 'New-Snapshot',
                                 'Remove-Snapshot')) {
                 ($exported -contains $name) | Should Be $true
             }
@@ -504,6 +504,65 @@ Describe 'FakePowerCLI' {
             $null = FakePowerCLI\Remove-VM -VM 'web-02' -Confirm:$false
             $state = (Get-Content -Path $env:FAKEVI_STATE) -join "`n" | ConvertFrom-Json
             @($state.snapshots | Where-Object { $_.vm -eq 'web-02' }).Count | Should Be 0
+        }
+        Reset-FakeViSession
+    }
+
+    Context 'vMotion' {
+        Reset-FakeViSession
+        $null = New-FakeViState -Mutate {
+            param($state)
+            $state.stats = @(@($state.stats) + (New-Object psobject -Property @{
+                entity = 'esx03.lab.local'; stat = 'mem.usage.average'; unit = '%'; intervalSecs = 7200; offsetMins = 0
+                values = @(88, 87, 86, 85)
+            }))
+        }
+        Import-Module $manifest -Force
+
+        It 'Move-VM throws the not-connected error before connecting' {
+            { FakePowerCLI\Move-VM -VM 'app03' -Destination 'esx01.lab.local' -Confirm:$false } |
+                Should Throw 'You are not currently connected to any servers'
+        }
+
+        $null = Connect-FakeLab
+        $now = [datetime]$env:FAKEVI_NOW
+        $statsBefore = @(FakePowerCLI\Get-Stat -Entity 'esx03.lab.local' -Stat 'mem.usage.average' -Start $now.AddDays(-1) -Finish $now |
+            ForEach-Object { $_.Value }) -join ','
+        $before = (Get-FileHash -Path $env:FAKEVI_STATE -Algorithm SHA256).Hash
+        $null = FakePowerCLI\Move-VM -VM 'app03' -Destination 'esx01.lab.local' -WhatIf
+
+        It 'Move-VM honours -WhatIf' {
+            (Get-FileHash -Path $env:FAKEVI_STATE -Algorithm SHA256).Hash | Should Be $before
+        }
+
+        $moved = FakePowerCLI\Move-VM -VM 'app03' -Destination 'esx01.lab.local' -Confirm:$false
+
+        It 'Move-VM puts the VM on the destination host and returns it' {
+            $moved.Name | Should Be 'app03'
+            $moved.VMHost.Name | Should Be 'esx01.lab.local'
+            (FakePowerCLI\Get-VM -Name 'app03').VMHost.Name | Should Be 'esx01.lab.local'
+        }
+        It 'Get-VMHost memory usage follows the VM' {
+            (FakePowerCLI\Get-VMHost -Name 'esx01.lab.local').MemoryUsageGB | Should Be 18
+            (FakePowerCLI\Get-VMHost -Name 'esx03.lab.local').MemoryUsageGB | Should Be 76
+        }
+        It 'leaves Get-Stat samples unchanged' {
+            $statsBefore | Should Not BeNullOrEmpty
+            (@(FakePowerCLI\Get-Stat -Entity 'esx03.lab.local' -Stat 'mem.usage.average' -Start $now.AddDays(-1) -Finish $now |
+                ForEach-Object { $_.Value }) -join ',') | Should Be $statsBefore
+        }
+        It 'Move-VM accepts VM and host objects' {
+            $vm = FakePowerCLI\Get-VM -Name 'build01'
+            $target = FakePowerCLI\Get-VMHost -Name 'esx02.lab.local'
+            $null = $vm | FakePowerCLI\Move-VM -Destination $target -Confirm:$false
+            (FakePowerCLI\Get-VM -Name 'build01').VMHost.Name | Should Be 'esx02.lab.local'
+        }
+        It 'Move-VM refuses an unknown destination host' {
+            { FakePowerCLI\Move-VM -VM 'app01' -Destination 'esx99.lab.local' -Confirm:$false } | Should Throw 'esx99.lab.local'
+            (FakePowerCLI\Get-VM -Name 'app01').VMHost.Name | Should Be 'esx03.lab.local'
+        }
+        It 'Move-VM writes the not-found error for an unknown VM' {
+            { FakePowerCLI\Move-VM -VM 'nope-01' -Destination 'esx01.lab.local' -Confirm:$false -ErrorAction Stop } | Should Throw 'nope-01'
         }
         Reset-FakeViSession
     }

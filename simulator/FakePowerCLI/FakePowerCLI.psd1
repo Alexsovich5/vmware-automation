@@ -17,6 +17,7 @@
         'Start-VM',
         'Stop-VM',
         'Remove-VM',
+        'Move-VM',
         'Get-Stat',
         'Get-Snapshot',
         'New-Snapshot',
