@@ -27,7 +27,8 @@ Describe 'FakePowerCLI' {
             foreach ($name in @('Connect-VIServer', 'Disconnect-VIServer', 'Get-Cluster', 'Get-VMHost',
                                 'Get-VM', 'Get-Template', 'Get-Datastore', 'New-VM', 'Set-VM', 'Start-VM',
                                 'Stop-VM', 'Remove-VM', 'Move-VM', 'Get-Stat', 'Get-Snapshot', 'New-Snapshot',
-                                'Remove-Snapshot')) {
+                                'Remove-Snapshot', 'Get-AdvancedSetting', 'Set-AdvancedSetting', 'New-AdvancedSetting',
+                                'Get-VMHostService', 'Stop-VMHostService', 'Set-VMHostService', 'Get-VMHostNtpServer')) {
                 ($exported -contains $name) | Should Be $true
             }
         }
@@ -567,6 +568,102 @@ Describe 'FakePowerCLI' {
         }
         It 'Move-VM writes the not-found error for an unknown VM' {
             { FakePowerCLI\Move-VM -VM 'nope-01' -Destination 'esx01.lab.local' -Confirm:$false -ErrorAction Stop } | Should Throw 'nope-01'
+        }
+        Reset-FakeViSession
+    }
+
+    Context 'hardening cmdlets' {
+        Reset-FakeViSession
+        $null = New-FakeViState
+        Import-Module $manifest -Force
+
+        It 'Get-AdvancedSetting throws the not-connected error before connecting' {
+            { FakePowerCLI\Get-AdvancedSetting -Entity 'dc01' } | Should Throw 'You are not currently connected to any servers'
+        }
+        It 'Get-VMHostService throws the not-connected error before connecting' {
+            { FakePowerCLI\Get-VMHostService -VMHost 'esx01.lab.local' } | Should Throw 'You are not currently connected to any servers'
+        }
+
+        $null = Connect-FakeLab
+
+        It 'Get-AdvancedSetting returns host settings with their value and entity' {
+            $s = @(FakePowerCLI\Get-AdvancedSetting -Entity 'esx02.lab.local' -Name 'UserVars.ESXiShellTimeOut')
+            $s.Count | Should Be 1
+            $s[0].Name | Should Be 'UserVars.ESXiShellTimeOut'
+            "$($s[0].Value)" | Should Be '900'
+            $s[0].Entity.Name | Should Be 'esx02.lab.local'
+            $s[0].Type | Should Be 'VMHost'
+        }
+        It 'Get-AdvancedSetting accepts VM objects and wildcard names' {
+            $vm = FakePowerCLI\Get-VM -Name 'dc01'
+            $s = @(FakePowerCLI\Get-AdvancedSetting -Entity $vm -Name 'isolation.tools.*')
+            $s.Count | Should Be 4
+            $s[0].Type | Should Be 'VM'
+        }
+        It 'Get-AdvancedSetting returns nothing for a setting a VM does not have' {
+            @(FakePowerCLI\Get-AdvancedSetting -Entity 'web-02' -Name 'isolation.tools.copy.disable').Count | Should Be 0
+        }
+        It 'Get-VMHostService reports SSH running on esx02.lab.local only' {
+            $ssh = @(FakePowerCLI\Get-VMHostService -VMHost 'esx02.lab.local' | Where-Object { $_.Key -eq 'TSM-SSH' })
+            $ssh.Count | Should Be 1
+            $ssh[0].Running | Should Be $true
+            $ssh[0].Policy | Should Be 'on'
+            $ssh[0].VMHost.Name | Should Be 'esx02.lab.local'
+            (@(FakePowerCLI\Get-VMHostService -VMHost 'esx01.lab.local' | Where-Object { $_.Key -eq 'TSM-SSH' })[0].Running) | Should Be $false
+        }
+        It 'Get-VMHostNtpServer lists servers, and none for esx03.lab.local' {
+            (@(FakePowerCLI\Get-VMHostNtpServer -VMHost 'esx01.lab.local').Count -gt 0) | Should Be $true
+            @(FakePowerCLI\Get-VMHostNtpServer -VMHost 'esx03.lab.local').Count | Should Be 0
+        }
+
+        $before = (Get-FileHash -Path $env:FAKEVI_STATE -Algorithm SHA256).Hash
+        $setting = FakePowerCLI\Get-AdvancedSetting -Entity 'web-01' -Name 'RemoteDisplay.maxConnections'
+        $null = FakePowerCLI\Set-AdvancedSetting -AdvancedSetting $setting -Value '1' -WhatIf
+        $null = FakePowerCLI\New-AdvancedSetting -Entity 'web-02' -Name 'isolation.tools.copy.disable' -Value 'TRUE' -WhatIf
+        $service = @(FakePowerCLI\Get-VMHostService -VMHost 'esx02.lab.local' | Where-Object { $_.Key -eq 'TSM-SSH' })
+        $null = FakePowerCLI\Stop-VMHostService -HostService $service -WhatIf
+        $null = FakePowerCLI\Set-VMHostService -HostService $service -Policy 'Off' -WhatIf
+
+        It 'the mutating cmdlets honour -WhatIf' {
+            (Get-FileHash -Path $env:FAKEVI_STATE -Algorithm SHA256).Hash | Should Be $before
+        }
+
+        $updated = FakePowerCLI\Set-AdvancedSetting -AdvancedSetting $setting -Value '1' -Confirm:$false
+
+        It 'Set-AdvancedSetting changes and returns the setting' {
+            "$($updated.Value)" | Should Be '1'
+            "$((FakePowerCLI\Get-AdvancedSetting -Entity 'web-01' -Name 'RemoteDisplay.maxConnections').Value)" | Should Be '1'
+        }
+
+        $created = FakePowerCLI\New-AdvancedSetting -Entity 'web-02' -Name 'isolation.tools.copy.disable' -Value 'TRUE' -Confirm:$false
+
+        It 'New-AdvancedSetting adds a setting to the VM' {
+            $created.Name | Should Be 'isolation.tools.copy.disable'
+            (FakePowerCLI\Get-AdvancedSetting -Entity 'web-02' -Name 'isolation.tools.copy.disable').Value | Should Be 'TRUE'
+        }
+        It 'New-AdvancedSetting refuses an existing setting without -Force and replaces it with -Force' {
+            { FakePowerCLI\New-AdvancedSetting -Entity 'web-02' -Name 'isolation.tools.copy.disable' -Value 'FALSE' -Confirm:$false } |
+                Should Throw 'already exists'
+            $null = FakePowerCLI\New-AdvancedSetting -Entity 'web-02' -Name 'isolation.tools.copy.disable' -Value 'FALSE' -Force -Confirm:$false
+            @(FakePowerCLI\Get-AdvancedSetting -Entity 'web-02' -Name 'isolation.tools.copy.disable').Count | Should Be 1
+            (FakePowerCLI\Get-AdvancedSetting -Entity 'web-02' -Name 'isolation.tools.copy.disable').Value | Should Be 'FALSE'
+        }
+
+        $stopped = FakePowerCLI\Stop-VMHostService -HostService $service -Confirm:$false
+        $policy = FakePowerCLI\Set-VMHostService -HostService $service -Policy 'Off' -Confirm:$false
+
+        It 'Stop-VMHostService stops the service and Set-VMHostService changes its policy' {
+            $stopped.Running | Should Be $false
+            $policy.Policy | Should Be 'off'
+            $now = @(FakePowerCLI\Get-VMHostService -VMHost 'esx02.lab.local' | Where-Object { $_.Key -eq 'TSM-SSH' })[0]
+            $now.Running | Should Be $false
+            $now.Policy | Should Be 'off'
+        }
+        It 'leaves the other services of the host alone' {
+            $ntpd = @(FakePowerCLI\Get-VMHostService -VMHost 'esx02.lab.local' | Where-Object { $_.Key -eq 'ntpd' })
+            $ntpd.Count | Should Be 1
+            $ntpd[0].Running | Should Be $true
+            $ntpd[0].Policy | Should Be 'on'
         }
         Reset-FakeViSession
     }

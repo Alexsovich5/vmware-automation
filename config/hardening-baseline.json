@@ -1,0 +1,22 @@
+{
+  "host": {
+    "advancedSettings": [
+      { "id": "ESXi.set-shell-interactive-timeout", "name": "UserVars.ESXiShellInteractiveTimeOut", "value": 900 },
+      { "id": "ESXi.set-shell-timeout",             "name": "UserVars.ESXiShellTimeOut",            "value": 900 },
+      { "id": "ESXi.config-persistent-logs",        "name": "Syslog.global.logDir",                 "notValue": "[] /scratch/log" },
+      { "id": "ESXi.enable-bpdu-filter",            "name": "Net.BlockGuestBPDU",                   "value": 1 }
+    ],
+    "services": [ { "id": "ESXi.disable-ssh", "key": "TSM-SSH", "running": false, "policy": "off" } ],
+    "ntp":      { "id": "ESXi.config-ntp", "minServers": 1 }
+  },
+  "vm": {
+    "advancedSettings": [
+      { "id": "VM.disable-console-copy",          "name": "isolation.tools.copy.disable",       "value": "TRUE" },
+      { "id": "VM.disable-console-paste",         "name": "isolation.tools.paste.disable",      "value": "TRUE" },
+      { "id": "VM.disable-disk-shrinking-shrink", "name": "isolation.tools.diskShrink.disable", "value": "TRUE" },
+      { "id": "VM.disable-disk-shrinking-wiper",  "name": "isolation.tools.diskWiper.disable",  "value": "TRUE" },
+      { "id": "VM.limit-console-connection",      "name": "RemoteDisplay.maxConnections",       "value": "1" },
+      { "id": "VM.limit-setinfo-size",            "name": "tools.setInfo.sizeLimit",            "value": "1048576" }
+    ]
+  }
+}

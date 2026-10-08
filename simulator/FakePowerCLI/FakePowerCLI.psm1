@@ -1101,6 +1101,349 @@ function Remove-Snapshot {
     }
 }
 
+# ---------------------------------------------------------------------------------------------
+# Hardening: advanced settings, host services and NTP
+# ---------------------------------------------------------------------------------------------
+
+# Returns the state list named $Name, or an empty array when the state has no such list.
+function Get-FakeViList {
+    param(
+        [psobject]$State,
+        [string]$Name
+    )
+    if ($State.PSObject.Properties[$Name]) {
+        return @($State.$Name | Where-Object { $_ })
+    }
+    @()
+}
+
+# Stores $Items as the state list named $Name, adding the list when the state lacks it.
+function Set-FakeViList {
+    param(
+        [psobject]$State,
+        [string]$Name,
+        [object[]]$Items
+    )
+    if ($State.PSObject.Properties[$Name]) {
+        $State.$Name = @($Items)
+    }
+    else {
+        $State | Add-Member -MemberType NoteProperty -Name $Name -Value @($Items)
+    }
+}
+
+# Resolves an entity name to its VM or host object and type; writes the "Could not find" error
+# for names that are neither.
+function Resolve-FakeViEntity {
+    param(
+        [psobject]$State,
+        [string]$Name
+    )
+    $vm = @($State.vms | Where-Object { $_.name -eq $Name })
+    if ($vm.Count -gt 0) {
+        return @{ Type = 'VM'; Object = (ConvertTo-FakeViVM -State $State -Record $vm[0]) }
+    }
+    $vmHost = @($State.hosts | Where-Object { $_.name -eq $Name })
+    if ($vmHost.Count -gt 0) {
+        return @{ Type = 'VMHost'; Object = (ConvertTo-FakeViVMHost -State $State -Record $vmHost[0]) }
+    }
+    Write-Error -Message ("Could not find VIObject with name '{0}'." -f $Name) -Category ObjectNotFound -TargetObject $Name
+    $null
+}
+
+function ConvertTo-FakeViAdvancedSetting {
+    param(
+        [psobject]$Record,
+        [hashtable]$Entity
+    )
+    $obj = New-Object psobject -Property @{
+        Name        = $Record.name
+        Value       = $Record.value
+        Type        = $Entity.Type
+        Entity      = $Entity.Object
+        Description = ''
+    }
+    $obj.PSObject.TypeNames.Insert(0, 'VMware.VimAutomation.ViCore.Impl.V1.AdvancedSettingImpl')
+    $obj
+}
+
+function ConvertTo-FakeViHostService {
+    param(
+        [psobject]$State,
+        [psobject]$Record
+    )
+    $hostRecord = @($State.hosts | Where-Object { $_.name -eq $Record.host })
+    $vmHost = $null
+    $vmHostId = $null
+    if ($hostRecord.Count -gt 0) {
+        $vmHost = ConvertTo-FakeViVMHost -State $State -Record $hostRecord[0]
+        $vmHostId = $hostRecord[0].id
+    }
+    $obj = New-Object psobject -Property @{
+        Key           = $Record.key
+        Label         = $Record.label
+        Running       = [bool]$Record.running
+        Policy        = $Record.policy
+        Required      = [bool]$Record.required
+        Uninstallable = $false
+        VMHost        = $vmHost
+        VMHostId      = $vmHostId
+    }
+    $obj.PSObject.TypeNames.Insert(0, 'VMware.VimAutomation.ViCore.Impl.V1.Host.HostServiceImpl')
+    $obj
+}
+
+# Returns the state records for -HostService arguments (Get-VMHostService objects), matched by
+# host and key.
+function Get-FakeViHostServiceRecord {
+    param(
+        [psobject]$State,
+        [object[]]$HostService
+    )
+    $records = @(Get-FakeViList -State $State -Name 'hostServices')
+    foreach ($item in @($HostService | Where-Object { $null -ne $_ })) {
+        $hostName = $null
+        if ($item.PSObject.Properties['VMHost'] -and $item.VMHost) {
+            $hostName = [string]$item.VMHost.Name
+        }
+        elseif ($item.PSObject.Properties['VMHostId'] -and $item.VMHostId) {
+            $hostName = @($State.hosts | Where-Object { $_.id -eq $item.VMHostId } | ForEach-Object { $_.name })[0]
+        }
+        $match = @($records | Where-Object { $_.host -eq $hostName -and $_.key -eq $item.Key })
+        if ($match.Count -eq 0) {
+            Write-Error -Message ("Could not find HostService '{0}' on host '{1}'." -f $item.Key, $hostName) -Category ObjectNotFound -TargetObject $item
+            continue
+        }
+        $match[0]
+    }
+}
+
+function Get-AdvancedSetting {
+    [CmdletBinding()]
+    param(
+        [Parameter(Position=0, ValueFromPipeline=$true)]
+        [object[]]$Entity,
+        [string[]]$Name,
+        [object[]]$Server
+    )
+
+    process {
+        Assert-FakeViConnected
+        $state = Get-FakeViState
+        $records = @(Get-FakeViList -State $state -Name 'advancedSettings')
+        foreach ($entityName in (Get-FakeViName $Entity)) {
+            $resolved = Resolve-FakeViEntity -State $state -Name $entityName
+            if (-not $resolved) {
+                continue
+            }
+            foreach ($record in @($records | Where-Object { $_.entity -eq $entityName })) {
+                if ($Name) {
+                    $current = $record
+                    if (@($Name | Where-Object { $current.name -like $_ }).Count -eq 0) {
+                        continue
+                    }
+                }
+                ConvertTo-FakeViAdvancedSetting -Record $record -Entity $resolved
+            }
+        }
+    }
+}
+
+function Set-AdvancedSetting {
+    [CmdletBinding(SupportsShouldProcess=$true, ConfirmImpact='High')]
+    param(
+        [Parameter(Position=0, ValueFromPipeline=$true)]
+        [object[]]$AdvancedSetting,
+        [object]$Value,
+        [object[]]$Server
+    )
+
+    process {
+        Assert-FakeViConnected
+        $state = Get-FakeViState
+        $records = @(Get-FakeViList -State $state -Name 'advancedSettings')
+        $changed = @()
+        foreach ($item in @($AdvancedSetting | Where-Object { $null -ne $_ })) {
+            $entityName = @(Get-FakeViName @($item.Entity))[0]
+            $match = @($records | Where-Object { $_.entity -eq $entityName -and $_.name -eq $item.Name })
+            if ($match.Count -eq 0) {
+                Write-Error -Message ("Could not find AdvancedSetting '{0}' on '{1}'." -f $item.Name, $entityName) -Category ObjectNotFound -TargetObject $item
+                continue
+            }
+            if (-not $PSCmdlet.ShouldProcess($entityName, ("Set advanced setting '{0}' to '{1}'" -f $item.Name, $Value))) {
+                continue
+            }
+            $match[0].value = $Value
+            $changed += @{ Record = $match[0]; Entity = $entityName }
+        }
+        if ($changed.Count -gt 0) {
+            Save-FakeViState -State $state
+            foreach ($c in $changed) {
+                ConvertTo-FakeViAdvancedSetting -Record $c.Record -Entity (Resolve-FakeViEntity -State $state -Name $c.Entity)
+            }
+        }
+    }
+}
+
+# Adds an advanced setting to an entity. An existing setting with the same name is refused
+# unless -Force is given, in which case its value is replaced.
+function New-AdvancedSetting {
+    [CmdletBinding(SupportsShouldProcess=$true, ConfirmImpact='Medium')]
+    param(
+        [Parameter(Position=0, ValueFromPipeline=$true)]
+        [object[]]$Entity,
+        [string]$Name,
+        [object]$Value,
+        [string]$Type,
+        [switch]$Force,
+        [object[]]$Server
+    )
+
+    process {
+        Assert-FakeViConnected
+        $state = Get-FakeViState
+        $records = @(Get-FakeViList -State $state -Name 'advancedSettings')
+        $changed = @()
+        foreach ($entityName in (Get-FakeViName $Entity)) {
+            $resolved = Resolve-FakeViEntity -State $state -Name $entityName
+            if (-not $resolved) {
+                continue
+            }
+            $existing = @($records | Where-Object { $_.entity -eq $entityName -and $_.name -eq $Name })
+            if ($existing.Count -gt 0 -and -not $Force) {
+                throw ("The advanced setting '{0}' already exists on '{1}'." -f $Name, $entityName)
+            }
+            if (-not $PSCmdlet.ShouldProcess($entityName, ("Create advanced setting '{0}' with value '{1}'" -f $Name, $Value))) {
+                continue
+            }
+            if ($existing.Count -gt 0) {
+                $existing[0].value = $Value
+                $record = $existing[0]
+            }
+            else {
+                $record = New-Object psobject -Property ([ordered]@{ entity = $entityName; name = $Name; value = $Value })
+                $records += $record
+            }
+            $changed += @{ Record = $record; Entity = $resolved }
+        }
+        if ($changed.Count -gt 0) {
+            Set-FakeViList -State $state -Name 'advancedSettings' -Items $records
+            Save-FakeViState -State $state
+            foreach ($c in $changed) {
+                ConvertTo-FakeViAdvancedSetting -Record $c.Record -Entity $c.Entity
+            }
+        }
+    }
+}
+
+function Get-VMHostService {
+    [CmdletBinding()]
+    param(
+        [Parameter(Position=0, ValueFromPipeline=$true)]
+        [object[]]$VMHost,
+        [switch]$Refresh,
+        [object[]]$Server
+    )
+
+    process {
+        Assert-FakeViConnected
+        $state = Get-FakeViState
+        $records = @(Get-FakeViList -State $state -Name 'hostServices')
+        foreach ($hostName in (Get-FakeViName $VMHost)) {
+            if (@($state.hosts | Where-Object { $_.name -eq $hostName }).Count -eq 0) {
+                Write-Error -Message ("Could not find VMHost with name '{0}'." -f $hostName) -Category ObjectNotFound -TargetObject $hostName
+                continue
+            }
+            foreach ($record in @($records | Where-Object { $_.host -eq $hostName })) {
+                ConvertTo-FakeViHostService -State $state -Record $record
+            }
+        }
+    }
+}
+
+function Stop-VMHostService {
+    [CmdletBinding(SupportsShouldProcess=$true, ConfirmImpact='High')]
+    param(
+        [Parameter(Position=0, ValueFromPipeline=$true)]
+        [object[]]$HostService
+    )
+
+    process {
+        Assert-FakeViConnected
+        $state = Get-FakeViState
+        $changed = @()
+        foreach ($record in @(Get-FakeViHostServiceRecord -State $state -HostService $HostService)) {
+            if (-not $PSCmdlet.ShouldProcess($record.host, ("Stop service '{0}'" -f $record.key))) {
+                continue
+            }
+            $record.running = $false
+            $changed += $record
+        }
+        if ($changed.Count -gt 0) {
+            Save-FakeViState -State $state
+            foreach ($record in $changed) {
+                ConvertTo-FakeViHostService -State $state -Record $record
+            }
+        }
+    }
+}
+
+# Changes a service's startup policy; the policy is stored lower case, as the API reports it.
+function Set-VMHostService {
+    [CmdletBinding(SupportsShouldProcess=$true, ConfirmImpact='Medium')]
+    param(
+        [Parameter(Position=0, ValueFromPipeline=$true)]
+        [object[]]$HostService,
+        [ValidateSet('On', 'Off', 'Automatic')]
+        [string]$Policy
+    )
+
+    process {
+        Assert-FakeViConnected
+        $state = Get-FakeViState
+        $changed = @()
+        foreach ($record in @(Get-FakeViHostServiceRecord -State $state -HostService $HostService)) {
+            if (-not $PSCmdlet.ShouldProcess($record.host, ("Set service '{0}' policy to '{1}'" -f $record.key, $Policy))) {
+                continue
+            }
+            $record.policy = $Policy.ToLowerInvariant()
+            $changed += $record
+        }
+        if ($changed.Count -gt 0) {
+            Save-FakeViState -State $state
+            foreach ($record in $changed) {
+                ConvertTo-FakeViHostService -State $state -Record $record
+            }
+        }
+    }
+}
+
+function Get-VMHostNtpServer {
+    [CmdletBinding()]
+    param(
+        [Parameter(Position=0, ValueFromPipeline=$true)]
+        [object[]]$VMHost,
+        [object[]]$Server
+    )
+
+    process {
+        Assert-FakeViConnected
+        $state = Get-FakeViState
+        $records = @(Get-FakeViList -State $state -Name 'ntpServers')
+        foreach ($hostName in (Get-FakeViName $VMHost)) {
+            if (@($state.hosts | Where-Object { $_.name -eq $hostName }).Count -eq 0) {
+                Write-Error -Message ("Could not find VMHost with name '{0}'." -f $hostName) -Category ObjectNotFound -TargetObject $hostName
+                continue
+            }
+            foreach ($record in @($records | Where-Object { $_.host -eq $hostName })) {
+                foreach ($ntp in @($record.servers | Where-Object { $_ })) {
+                    [string]$ntp
+                }
+            }
+        }
+    }
+}
+
 Export-ModuleMember -Function @(
     'Connect-VIServer',
     'Disconnect-VIServer',
@@ -1118,5 +1461,12 @@ Export-ModuleMember -Function @(
     'Get-Stat',
     'Get-Snapshot',
     'New-Snapshot',
-    'Remove-Snapshot'
+    'Remove-Snapshot',
+    'Get-AdvancedSetting',
+    'Set-AdvancedSetting',
+    'New-AdvancedSetting',
+    'Get-VMHostService',
+    'Stop-VMHostService',
+    'Set-VMHostService',
+    'Get-VMHostNtpServer'
 )

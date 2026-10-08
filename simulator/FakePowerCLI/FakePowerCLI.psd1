@@ -21,7 +21,14 @@
         'Get-Stat',
         'Get-Snapshot',
         'New-Snapshot',
-        'Remove-Snapshot'
+        'Remove-Snapshot',
+        'Get-AdvancedSetting',
+        'Set-AdvancedSetting',
+        'New-AdvancedSetting',
+        'Get-VMHostService',
+        'Stop-VMHostService',
+        'Set-VMHostService',
+        'Get-VMHostNtpServer'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()

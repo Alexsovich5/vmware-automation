@@ -363,9 +363,10 @@ warning and critical thresholds; a summary is mailed when configured.
 **Files:**
 - create `config/hardening-baseline.json`.
 - create `src/VMwareAutomation/Public/Test-VAHardening.ps1`.
-- create `src/VMwareAutomation/Public/Set-VAHardening.ps1`: `Set-AdvancedSetting` or `New-AdvancedSetting` for missing VM keys; `Stop-VMHostService` plus `Set-VMHostService -Policy Off` for SSH. NTP findings are reported only, because the baseline has no NTP server list.
+- create `src/VMwareAutomation/Private/Read-VAHardeningBaseline.ps1` (loads the config's `hardeningBaseline` file; shared by both public functions, because `Set-VAHardening` needs the typed baseline values).
+- create `src/VMwareAutomation/Public/Set-VAHardening.ps1`: `Set-AdvancedSetting` or `New-AdvancedSetting` for missing VM keys; `Stop-VMHostService` plus `Set-VMHostService -Policy Off` for SSH. NTP and `notValue` findings are reported only (Action `ReportOnly`), because the baseline has no NTP server list and no replacement value for a `notValue` check.
 - modify the simulator: add `Get-AdvancedSetting`, `Set-AdvancedSetting`, `New-AdvancedSetting`, `Get-VMHostService`, `Stop-VMHostService`, `Set-VMHostService`, `Get-VMHostNtpServer`.
-- modify the fixture with mixed compliance: `esx02.lab.local` with SSH running, `esx03.lab.local` with no NTP servers, and every VM except `dc01` missing the isolation keys.
+- modify the fixture with mixed compliance: `esx02.lab.local` with SSH running, `esx03.lab.local` with no NTP servers, and every VM except `dc01` missing the isolation keys. Host persistent-log paths are compliant; a few fixable values are wrong (`esx01.lab.local` shell timeout 0, `esx03.lab.local` BPDU filter 0, `web-01` `RemoteDisplay.maxConnections` 2) so `Set-AdvancedSetting` is exercised as well as `New-AdvancedSetting`.
 - create `test/unit/Test-VAHardening.tests.ps1`, `test/unit/Set-VAHardening.tests.ps1`, `test/integration/Hardening.tests.ps1`.
 
 **Tests to write first:**

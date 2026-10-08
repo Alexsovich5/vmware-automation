@@ -70,6 +70,44 @@
     { "vm": "web-01", "name": "auto-daily-20140305-0200", "id": "VirtualMachineSnapshot-snapshot-206", "description": "Created by snapshot policy 'daily'", "offsetDays": -10, "memory": false, "quiesced": false, "sizeGB": 3.3 },
     { "vm": "web-01", "name": "pre-patch",                "id": "VirtualMachineSnapshot-snapshot-207", "description": "before OS patching",                 "offsetDays": -30, "memory": true,  "quiesced": false, "sizeGB": 6.8 }
   ],
+  "advancedSettings": [
+    { "entity": "esx01.lab.local", "name": "UserVars.ESXiShellInteractiveTimeOut", "value": 900 },
+    { "entity": "esx01.lab.local", "name": "UserVars.ESXiShellTimeOut",            "value": 0 },
+    { "entity": "esx01.lab.local", "name": "Syslog.global.logDir",                 "value": "[ds-sata01] logs/esx01" },
+    { "entity": "esx01.lab.local", "name": "Net.BlockGuestBPDU",                   "value": 1 },
+    { "entity": "esx02.lab.local", "name": "UserVars.ESXiShellInteractiveTimeOut", "value": 900 },
+    { "entity": "esx02.lab.local", "name": "UserVars.ESXiShellTimeOut",            "value": 900 },
+    { "entity": "esx02.lab.local", "name": "Syslog.global.logDir",                 "value": "[ds-sata01] logs/esx02" },
+    { "entity": "esx02.lab.local", "name": "Net.BlockGuestBPDU",                   "value": 1 },
+    { "entity": "esx03.lab.local", "name": "UserVars.ESXiShellInteractiveTimeOut", "value": 900 },
+    { "entity": "esx03.lab.local", "name": "UserVars.ESXiShellTimeOut",            "value": 900 },
+    { "entity": "esx03.lab.local", "name": "Syslog.global.logDir",                 "value": "[ds-sata01] logs/esx03" },
+    { "entity": "esx03.lab.local", "name": "Net.BlockGuestBPDU",                   "value": 0 },
+    { "entity": "dc01",   "name": "isolation.tools.copy.disable",       "value": "TRUE" },
+    { "entity": "dc01",   "name": "isolation.tools.paste.disable",      "value": "TRUE" },
+    { "entity": "dc01",   "name": "isolation.tools.diskShrink.disable", "value": "TRUE" },
+    { "entity": "dc01",   "name": "isolation.tools.diskWiper.disable",  "value": "TRUE" },
+    { "entity": "dc01",   "name": "RemoteDisplay.maxConnections",       "value": "1" },
+    { "entity": "dc01",   "name": "tools.setInfo.sizeLimit",            "value": "1048576" },
+    { "entity": "web-01", "name": "RemoteDisplay.maxConnections",       "value": "2" },
+    { "entity": "web-01", "name": "tools.setInfo.sizeLimit",            "value": "1048576" }
+  ],
+  "hostServices": [
+    { "host": "esx01.lab.local", "key": "TSM",     "label": "ESXi Shell", "running": false, "policy": "off", "required": false },
+    { "host": "esx01.lab.local", "key": "TSM-SSH", "label": "SSH",        "running": false, "policy": "off", "required": false },
+    { "host": "esx01.lab.local", "key": "ntpd",    "label": "NTP Daemon", "running": true,  "policy": "on",  "required": false },
+    { "host": "esx02.lab.local", "key": "TSM",     "label": "ESXi Shell", "running": false, "policy": "off", "required": false },
+    { "host": "esx02.lab.local", "key": "TSM-SSH", "label": "SSH",        "running": true,  "policy": "on",  "required": false },
+    { "host": "esx02.lab.local", "key": "ntpd",    "label": "NTP Daemon", "running": true,  "policy": "on",  "required": false },
+    { "host": "esx03.lab.local", "key": "TSM",     "label": "ESXi Shell", "running": false, "policy": "off", "required": false },
+    { "host": "esx03.lab.local", "key": "TSM-SSH", "label": "SSH",        "running": false, "policy": "off", "required": false },
+    { "host": "esx03.lab.local", "key": "ntpd",    "label": "NTP Daemon", "running": false, "policy": "off", "required": false }
+  ],
+  "ntpServers": [
+    { "host": "esx01.lab.local", "servers": [ "ntp1.lab.local", "ntp2.lab.local" ] },
+    { "host": "esx02.lab.local", "servers": [ "ntp1.lab.local", "ntp2.lab.local" ] },
+    { "host": "esx03.lab.local", "servers": [] }
+  ],
   "stats": [
     { "entity": "dc01", "stat": "cpu.usage.average", "unit": "%", "intervalSecs": 7200, "offsetMins": 0,
       "values": [ 13.9, 14.4, 15.3, 17.2, 19.1, 21, 21.9, 21.9, 20.1, 17.2, 14.4, 13.4, 13.4, 15.3, 16.3, 18.3, 20.3, 22.3, 23.3, 23.3, 21.3, 18.3, 15.3, 14.3, 14.3, 14.1, 15, 16.9, 18.7, 20.6, 21.5, 21.5, 19.6, 16.9, 14.1, 13.2, 13.2, 15.6, 16.6, 18.6, 20.7, 22.7, 23.8, 23.8, 21.7, 18.6, 15.6, 14.6, 14.6, 14.5, 15.5, 17.4, 19.3, 21.2, 22.2, 22.2, 20.3, 17.4, 14.5, 13.6, 13.6, 15.1, 16.1, 18.1, 20.1, 22.1, 23.1, 23.1, 21.1, 18.1, 15.1, 14.1, 14.1, 14.8, 15.8, 17.8, 19.7, 21.6, 22.6, 22.6, 20.7, 17.8, 14.8, 13.9, 13.9 ] },
