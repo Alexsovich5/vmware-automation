@@ -1,0 +1,17 @@
+name: vmware-automation
+
+services:
+  tests:
+    build: .
+    image: vmware-automation:dev
+    platform: linux/amd64
+    volumes:
+      - .:/work
+    environment:
+      TEMP: /tmp
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.45.0.0/24
