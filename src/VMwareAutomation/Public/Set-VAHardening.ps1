@@ -11,6 +11,9 @@ function Set-VAHardening {
           policy is changed with Set-VMHostService -Policy;
         - NTP and "notValue" findings are reported only, because the baseline names neither the
           NTP servers nor the value to use instead.
+        Hosts and VMs are looked up by the names in those rows with Resolve-VAExactEntity, so a
+        name with wildcard characters or one shared by two objects stops the run with an error
+        instead of changing an arbitrary object.
         Every change goes through ShouldProcess and calls the PowerCLI cmdlet with -Confirm:$false.
         Returns rows (EntityType, Entity, CheckId, Setting, Action) with Action Fixed, WouldFix
         under -WhatIf, or ReportOnly.
@@ -43,12 +46,9 @@ function Set-VAHardening {
         param([string]$EntityType, [string]$Name)
         $key = '{0}|{1}' -f $EntityType, $Name
         if (-not $entityCache.ContainsKey($key)) {
-            if ($EntityType -eq 'VMHost') {
-                $entityCache[$key] = @(Get-VMHost -Name $Name)[0]
-            }
-            else {
-                $entityCache[$key] = @(Get-VM -Name $Name)[0]
-            }
+            # Exactly one object per name: a pattern or a duplicate name must not pick an
+            # arbitrary host or VM to change.
+            $entityCache[$key] = Resolve-VAExactEntity -EntityType $EntityType -Name $Name
         }
         $entityCache[$key]
     }

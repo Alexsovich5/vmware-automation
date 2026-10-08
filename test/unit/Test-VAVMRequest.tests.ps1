@@ -36,6 +36,16 @@ Describe 'Test-VAVMRequest' {
         }
     }
 
+    Context 'a template name with wildcard characters' {
+        $wildConfig = Read-VAConfig -Path $examplePath
+        $wildConfig.provisioning.templates | Add-Member -MemberType NoteProperty -Name 'tpl-*' -Value (New-Object psobject -Property @{ diskGB = 16 })
+        Mock Get-VM {}
+
+        It 'is rejected even when the config lists it, because New-VM would expand it' {
+            { Test-VAVMRequest -Config $wildConfig -Name 'web-03' -Template 'tpl-*' -NumCpu 2 -MemoryMB 4096 } | Should Throw 'wildcard'
+        }
+    }
+
     Context 'a VM with the requested name already exists' {
         Mock Get-VM { New-Object psobject -Property @{ Name = 'web-01' } } -ParameterFilter { $Name -contains 'web-01' }
 

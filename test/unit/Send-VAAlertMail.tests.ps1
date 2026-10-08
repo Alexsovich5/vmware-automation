@@ -75,6 +75,32 @@ Describe 'Send-VAAlertMail' {
         }
     }
 
+    Context 'only Unknown alerts (no samples)' {
+        $config = Get-TestConfig
+        $global:VAMail = $null
+        Mock Send-MailMessage {
+            $global:VAMail = New-Object psobject -Property @{ Subject = $Subject; Body = $Body }
+        }
+        $unknown = New-Object psobject -Property ([ordered]@{
+            Severity = 'Unknown'; EntityType = 'VMHost'; Entity = 'esx01.lab.local'; Metric = 'cpu.usage.average'
+            Value = $null; Threshold = $null; Timestamp = [datetime]'2014-03-15T02:00:00'
+        })
+
+        Send-VAAlertMail -Config $config -Alert @($unknown) -Confirm:$false
+        $mail = $global:VAMail
+        Remove-Variable -Name VAMail -Scope Global
+
+        It 'still sends a mail' {
+            Assert-MockCalled Send-MailMessage -Times 1 -Exactly
+        }
+        It 'counts the unknown rows in the subject' {
+            $mail.Subject | Should Match '1 unknown'
+        }
+        It 'lists the entity in the body' {
+            $mail.Body | Should Match 'esx01\.lab\.local'
+        }
+    }
+
     Context 'no alerts' {
         $config = Get-TestConfig
         Mock Send-MailMessage { }

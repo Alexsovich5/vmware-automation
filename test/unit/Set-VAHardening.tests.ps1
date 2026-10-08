@@ -6,6 +6,7 @@ $src = Join-Path $repo 'src/VMwareAutomation'
 . (Join-Path $src 'Private/Write-VALog.ps1')
 . (Join-Path $src 'Private/Read-VAConfig.ps1')
 . (Join-Path $src 'Private/Read-VAHardeningBaseline.ps1')
+. (Join-Path $src 'Private/Resolve-VAExactEntity.ps1')
 . (Join-Path $src 'Public/Test-VAHardening.ps1')
 . (Join-Path $src 'Public/Set-VAHardening.ps1')
 
@@ -164,6 +165,50 @@ Describe 'Set-VAHardening' {
         It 'only changes the policy' {
             Assert-MockCalled Stop-VMHostService -Times 0 -Exactly
             Assert-MockCalled Set-VMHostService -Times 1 -Exactly
+        }
+    }
+
+    Context 'a host name shared by two hosts' {
+        $config = Get-TestConfig
+        Mock Test-VAHardening {
+            New-TestRow 'VMHost' 'esx01.lab.local' 'ESXi.disable-ssh' 'TSM-SSH' 'Running=False; Policy=off' 'Running=True; Policy=on' $false
+        }
+        Mock Get-VMHost {
+            New-Object psobject -Property @{ Name = 'esx01.lab.local'; Id = 'host-10' }
+            New-Object psobject -Property @{ Name = 'esx01.lab.local'; Id = 'host-11' }
+        }
+        Mock Get-VMHostService { New-Object psobject -Property @{ Key = 'TSM-SSH'; Running = $true; Policy = 'on' } }
+        Mock Stop-VMHostService { }
+        Mock Set-VMHostService { }
+
+        It 'throws instead of stopping a service on an arbitrary host' {
+            { Set-VAHardening -Config $config -Baseline (Get-TestBaseline) -Confirm:$false } | Should Throw 'ambiguous'
+        }
+        It 'changes no service' {
+            Assert-MockCalled Stop-VMHostService -Times 0 -Exactly
+            Assert-MockCalled Set-VMHostService -Times 0 -Exactly
+        }
+    }
+
+    Context 'a VM lookup that also returns a similarly named VM' {
+        $config = Get-TestConfig
+        Mock Test-VAHardening {
+            New-TestRow 'VM' 'web-01' 'VM.limit-console-connection' 'RemoteDisplay.maxConnections' '1' '2' $false
+        }
+        Mock Get-VM {
+            New-Object psobject -Property @{ Name = 'web-010'; Id = 'vm-2' }
+            New-Object psobject -Property @{ Name = 'web-01'; Id = 'vm-1' }
+        }
+        Mock Get-AdvancedSetting {
+            New-Object psobject -Property @{ Entity = @($Entity)[0]; Name = @($Name)[0]; Value = '2' }
+        }
+        Mock Set-AdvancedSetting { }
+
+        $null = Set-VAHardening -Config $config -Baseline (Get-TestBaseline) -Confirm:$false
+
+        It 'changes the setting on the VM with exactly that name' {
+            Assert-MockCalled Set-AdvancedSetting -Times 1 -Exactly
+            Assert-MockCalled Set-AdvancedSetting -Times 1 -Exactly -ParameterFilter { @($AdvancedSetting)[0].Entity.Id -eq 'vm-1' }
         }
     }
 

@@ -3,8 +3,12 @@ function Invoke-VALoadBalance {
     .SYNOPSIS
         Carries out a load balancing plan with vMotion (Move-VM).
     .DESCRIPTION
-        Uses -Plan when given, otherwise builds one with Get-VALoadBalancePlan. Each move runs
-        Move-VM -VM -Destination -Confirm:$false in plan order and is logged; the first failed
+        Uses -Plan when given, otherwise builds one with Get-VALoadBalancePlan. A move whose VM
+        is in loadBalance.excludeVMs (case-insensitive) is refused. Before each migration the VM
+        and the destination host are resolved with Resolve-VAExactEntity (no wildcards, exactly
+        one object per name) and the exclusion list is checked again on the resolved VM name;
+        Move-VM -VM -Destination -Confirm:$false then receives those objects, never a name it
+        could expand. Moves run in plan order and are logged; the first refused or failed
         migration stops the run with that error. Returns rows (Order, VM, Source, Destination,
         SpreadBefore, SpreadAfter, Action) with Action Moved, or WouldMove under -WhatIf, when
         nothing is migrated.
@@ -26,12 +30,29 @@ function Invoke-VALoadBalance {
         return
     }
 
+    $excluded = @()
+    if ($Config.loadBalance -and $Config.loadBalance.PSObject.Properties['excludeVMs']) {
+        $excluded = @($Config.loadBalance.excludeVMs | Where-Object { $_ } | ForEach-Object { [string]$_ })
+    }
+    $assertNotExcluded = {
+        param([string]$VMName)
+        if ($excluded -contains $VMName) {
+            $message = "VM '{0}' is excluded from load balancing (loadBalance.excludeVMs)" -f $VMName
+            Write-VALog -Config $Config -Message $message -Level 'ERROR' -Source 'Invoke-VALoadBalance'
+            throw $message
+        }
+    }
+
     foreach ($move in $Plan) {
         $vmName = [string]$move.VM
         $destination = [string]$move.Destination
+        & $assertNotExcluded $vmName
         if ($PSCmdlet.ShouldProcess($vmName, ("Migrate from {0} to {1}" -f $move.Source, $destination))) {
             try {
-                $null = Move-VM -VM $vmName -Destination $destination -Confirm:$false -ErrorAction Stop
+                $vm = Resolve-VAExactEntity -EntityType VM -Name $vmName
+                $vmHost = Resolve-VAExactEntity -EntityType VMHost -Name $destination
+                & $assertNotExcluded ([string]$vm.Name)
+                $null = Move-VM -VM $vm -Destination $vmHost -Confirm:$false -ErrorAction Stop
             }
             catch {
                 Write-VALog -Config $Config -Message ('Load balance: moving {0} to {1} failed: {2}' -f $vmName, $destination, $_.Exception.Message) -Level 'ERROR'

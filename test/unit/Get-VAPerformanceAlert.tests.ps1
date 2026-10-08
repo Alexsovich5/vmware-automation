@@ -18,8 +18,8 @@ function Get-TestConfig {
 }
 
 function New-TestHost {
-    param([string]$Name)
-    New-Object psobject -Property @{ Name = $Name; ConnectionState = 'Connected' }
+    param([string]$Name, [string]$ConnectionState = 'Connected')
+    New-Object psobject -Property @{ Name = $Name; ConnectionState = $ConnectionState }
 }
 
 function New-TestVM {
@@ -136,11 +136,85 @@ Describe 'Get-VAPerformanceAlert' {
         }
     }
 
+    Context 'hosts and VMs that return no samples' {
+        $config = Get-TestConfig
+        Mock Get-VMHost {
+            New-TestHost 'h-ok'
+            New-TestHost 'h-silent'
+            New-TestHost 'h-down' -ConnectionState 'NotResponding'
+        }
+        Mock Get-VM {
+            New-TestVM 'vm-ok'
+            New-TestVM 'vm-new'
+            New-TestVM 'vm-off' -PowerState 'PoweredOff'
+        }
+        Mock Get-Datastore { }
+        Mock Get-Stat {
+            New-TestSamples 'h-ok' 'cpu.usage.average' @(10) $Entity
+            New-TestSamples 'h-ok' 'mem.usage.average' @(10) $Entity
+            New-TestSamples 'h-silent' 'cpu.usage.average' @(10) $Entity
+            New-TestSamples 'vm-ok' 'cpu.usage.average' @(10) $Entity
+            New-TestSamples 'vm-ok' 'mem.usage.average' @(10) $Entity
+        }
+
+        $rows = @(Get-VAPerformanceAlert -Config $config -Now $fixedNow)
+        $unknown = @($rows | Where-Object { $_.Severity -eq 'Unknown' })
+
+        It 'reports each missing host metric as Unknown instead of healthy' {
+            @(Get-Alert $unknown 'h-silent' 'mem.usage.average').Count | Should Be 1
+            @(Get-Alert $unknown 'h-silent' 'cpu.usage.average').Count | Should Be 0
+            @(Get-Alert $unknown 'h-down' 'cpu.usage.average').Count | Should Be 1
+            @(Get-Alert $unknown 'h-down' 'mem.usage.average').Count | Should Be 1
+        }
+        It 'reports a powered-on VM without samples as Unknown' {
+            @(Get-Alert $unknown 'vm-new' 'cpu.usage.average').Count | Should Be 1
+            @(Get-Alert $unknown 'vm-new' 'mem.usage.average').Count | Should Be 1
+        }
+        It 'leaves entities with samples and powered-off VMs out' {
+            @($rows | Where-Object { $_.Entity -eq 'h-ok' -or $_.Entity -eq 'vm-ok' -or $_.Entity -eq 'vm-off' }).Count | Should Be 0
+        }
+        It 'gives Unknown rows the entity type, no value and no threshold' {
+            $a = @(Get-Alert $unknown 'h-down' 'cpu.usage.average')[0]
+            $a.EntityType | Should Be 'VMHost'
+            $a.Value | Should BeNullOrEmpty
+            $a.Threshold | Should BeNullOrEmpty
+            $a.Timestamp | Should Be $fixedNow
+            @(Get-Alert $unknown 'vm-new' 'cpu.usage.average')[0].EntityType | Should Be 'VM'
+        }
+        It 'returns exactly the five Unknown rows' {
+            $rows.Count | Should Be 5
+            $unknown.Count | Should Be 5
+        }
+        It 'logs the missing samples as a warning' {
+            (Join-Path $TestDrive 'logs/vmware-automation.log') | Should Contain 'WARN.*h-down.*no samples'
+        }
+    }
+
+    Context 'a cluster with no hosts' {
+        $config = Get-TestConfig
+        Mock Get-VMHost { }
+        Mock Get-VM { }
+        Mock Get-Datastore { }
+        Mock Get-Stat { }
+
+        $rows = @(Get-VAPerformanceAlert -Config $config -Now $fixedNow)
+
+        It 'reports the cluster as Unknown instead of returning no alerts' {
+            $rows.Count | Should Be 1
+            $rows[0].Severity | Should Be 'Unknown'
+            $rows[0].EntityType | Should Be 'Cluster'
+            $rows[0].Entity | Should Be 'Lab-Cluster'
+        }
+    }
+
     Context 'datastore free space' {
         $config = Get-TestConfig
         Mock Get-VMHost { New-TestHost 'h1' }
         Mock Get-VM { }
-        Mock Get-Stat { }
+        Mock Get-Stat {
+            New-TestSamples 'h1' 'cpu.usage.average' @(10) $Entity
+            New-TestSamples 'h1' 'mem.usage.average' @(10) $Entity
+        }
         Mock Get-Datastore {
             New-TestDatastore 'ds-warn' 1000 150
             New-TestDatastore 'ds-crit' 1000 50
@@ -177,7 +251,10 @@ Describe 'Get-VAPerformanceAlert' {
         Mock Get-VMHost { New-TestHost 'h1' }
         Mock Get-VM { }
         Mock Get-Datastore { }
-        Mock Get-Stat { New-TestSamples 'h1' 'mem.usage.average' @(99) $Entity }
+        Mock Get-Stat {
+            New-TestSamples 'h1' 'cpu.usage.average' @(10) $Entity
+            New-TestSamples 'h1' 'mem.usage.average' @(99) $Entity
+        }
 
         $rows = @(Get-VAPerformanceAlert -Config $config)
         $env:FAKEVI_NOW = $saved

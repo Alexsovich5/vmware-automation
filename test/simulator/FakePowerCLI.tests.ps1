@@ -410,7 +410,14 @@ Describe 'FakePowerCLI' {
         }
         It 'keeps realtime and historical samples apart' {
             @(FakePowerCLI\Get-Stat -Entity 'esx01.lab.local' -Stat 'cpu.usage.average' -Start $now.AddDays(-7) -Finish $now).Count | Should Be 0
-            @(FakePowerCLI\Get-Stat -Entity 'app-idle01' -Stat 'cpu.usage.average' -Realtime).Count | Should Be 0
+            $vmRealtime = @(FakePowerCLI\Get-Stat -Entity 'app-idle01' -Stat 'cpu.usage.average' -Realtime)
+            $vmRealtime.Count | Should Be 15
+            @($vmRealtime | Where-Object { $_.IntervalSecs -ne 20 }).Count | Should Be 0
+        }
+        It 'has realtime cpu and memory samples for every powered-on VM and host' {
+            $hosts = @(FakePowerCLI\Get-VMHost)
+            $rt = @(FakePowerCLI\Get-Stat -Entity (@($vms) + @($hosts)) -Stat 'cpu.usage.average', 'mem.usage.average' -Realtime -MaxSamples 1)
+            $rt.Count | Should Be ((@($vms).Count + @($hosts).Count) * 2)
         }
         It 'does not change the state file' {
             $before = (Get-FileHash -Path $env:FAKEVI_STATE -Algorithm SHA256).Hash

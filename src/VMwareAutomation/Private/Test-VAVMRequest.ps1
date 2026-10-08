@@ -5,8 +5,8 @@ function Test-VAVMRequest {
         vCPU and memory limits and the existing inventory.
     .DESCRIPTION
         Throws a message naming the first rule the request breaks; returns $true otherwise.
-        Rules: name matches ^[a-z0-9-]{3,15}$, the template is listed under
-        provisioning.templates, NumCpu and MemoryMB are inside provisioning.limits, MemoryMB is
+        Rules: name matches ^[a-z0-9-]{3,15}$, the template name has no wildcard characters and
+        is listed under provisioning.templates, NumCpu and MemoryMB are inside provisioning.limits, MemoryMB is
         a multiple of 4, and no VM with that name exists (Get-VM).
     #>
     [CmdletBinding()]
@@ -29,6 +29,10 @@ function Test-VAVMRequest {
 
     if ($Name -cnotmatch '^[a-z0-9-]{3,15}$') {
         throw ("Invalid VM name '{0}': use 3 to 15 lowercase letters, digits or hyphens." -f $Name)
+    }
+
+    if ([System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($Template) -or $Template.Contains('`')) {
+        throw ("Invalid template name '{0}': it contains wildcard characters, which New-VM would expand." -f $Template)
     }
 
     $templates = $Config.provisioning.templates

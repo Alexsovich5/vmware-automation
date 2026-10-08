@@ -11,7 +11,9 @@ function Invoke-VAProvisioningBatch {
         either way.
         Results (Action,Name,Status,Host,Datastore,Message) are returned and written with
         Export-Csv -NoTypeInformation to -ResultPath, or by default to
-        <outputDir>/provisioning-yyyyMMdd-HHmm.csv.
+        <outputDir>/provisioning-yyyyMMdd-HHmm.csv. In the file, string cells that would start
+        a spreadsheet formula (= + - @ TAB CR) get a leading single quote; the returned rows
+        keep the original values.
     #>
     [CmdletBinding(SupportsShouldProcess=$true)]
     param(
@@ -118,7 +120,7 @@ function Invoke-VAProvisioningBatch {
     if ($resultDir -and -not (Test-Path -Path $resultDir)) {
         New-Item -ItemType Directory -Path $resultDir -Force -WhatIf:$false | Out-Null
     }
-    $results | Export-Csv -Path $ResultPath -NoTypeInformation -Encoding UTF8 -WhatIf:$false
+    ConvertTo-VACsvSafe -InputObject $results | Export-Csv -Path $ResultPath -NoTypeInformation -Encoding UTF8 -WhatIf:$false
 
     $failed = @($results | Where-Object { $_.Status -eq 'Failed' }).Count
     Write-VALog -Config $Config -Message ("Batch finished: {0} row(s), {1} failed; results in {2}" -f $results.Count, $failed, $ResultPath)

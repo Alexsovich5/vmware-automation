@@ -1,6 +1,6 @@
 # vmware-automation: Implementation Plan
 
-This plan implements `docs/SPEC.md` in 14 tasks. Each task is one commit and leaves `make test` green.
+This plan implements `docs/SPEC.md` in 14 tasks, followed by a security and hygiene hardening pass (T15). Each task is one commit and leaves `make test` green.
 
 Conventions that apply to every task:
 - PowerShell 4 syntax only. `build/Test-PS4Syntax.ps1` runs as part of `make test`.
@@ -493,3 +493,25 @@ Rewrite README with implemented status and generated layout
 Documents what works, what is simulated or out of scope, how to run
 the demo and tests, and a file tree taken from the repository.
 ```
+
+---
+
+## T15 — Security and hygiene hardening
+
+**Goal:** review the whole repository for security, ops-correctness and hygiene problems and fix them test-first.
+
+**Found and changed:**
+- **Protected-VM bypass through wildcard or duplicate names (blocker).** `Remove-VAVirtualMachine` compared the protected list with the raw `-Name`, then ran `Get-VM -Name` (a wildcard pattern in PowerCLI) and deleted the first result. `Deprovision,dc0*` in a request CSV permanently deleted the protected `dc01`, and a name shared by two VMs deleted an arbitrary one. New private helper `Resolve-VAExactEntity` rejects names with wildcard characters (`* ? [ ]`, escape character) before any lookup, keeps only exact (case-insensitive) name matches and requires exactly one. `Remove-VAVirtualMachine` checks the protected list on the requested and on the resolved name and passes the resolved object to `Stop-VM`/`Remove-VM`.
+- **Same name-expansion risk in other state-changing calls (major).** `Invoke-VALoadBalance` passed VM and host names to `Move-VM`, and `Set-VAHardening` changed settings and stopped services on `@(Get-VMHost/Get-VM -Name ...)[0]`. Both now use `Resolve-VAExactEntity` and pass objects; `Invoke-VALoadBalance` also refuses a VM in `loadBalance.excludeVMs`, including one in a plan passed with `-Plan`. `Test-VAVMRequest` rejects template names with wildcard characters.
+- **Missing performance data reported as healthy (major).** `Get-VAPerformanceAlert` raised nothing for a host (including a disconnected one) or VM that returned no samples, and nothing for a cluster with no hosts, so the health check could exit 0 without any data. Such cases are now `Unknown` alert rows; `Invoke-HealthCheck.ps1` exits 3 when there is no Critical but at least one Unknown (precedence Critical, Unknown, Warning), and `Send-VAAlertMail` counts Unknown rows in the subject. The fixture gained realtime CPU and memory series for every powered-on VM, so the fixture lab still yields exactly its two real alerts.
+- **CSV formula injection (minor).** VM and datastore names are chosen by anyone allowed to create objects in vCenter and were written unchanged to `alerts.csv`; request values went unchanged into the provisioning result CSV. New private helper `ConvertTo-VACsvSafe` prefixes string cells starting with `= + - @`, TAB or CR with a single quote; numbers stay numbers.
+- **Credentials in output and logs (audit).** No leak found: the password comes from an environment variable and is passed only inside a PSCredential. `test/integration/Secrets.tests.ps1` now runs every entry script with a sentinel password through authentication failure, an unreachable vCenter and a successful run (with `-Verbose`) and asserts the sentinel appears in no output, log or report file.
+- README: Status items 3, 8, 9 and 11, the limitations (Unknown for VMs created during a run, the simulator's lab password) and the Layout block updated. SPEC features 2, 3, 8, 9 and 11, the alert row, the architecture list and the known limitations updated.
+
+**Reviewed, not changed:**
+- `scripts/Deploy-Automation.ps1` removes an existing installed copy of the module before copying the new one, so a failed copy leaves no module installed. The script exits 1 in that case and the next run reinstalls it; nothing else is deleted.
+- No HTTP endpoints (no CSRF surface); the HTML report is built with `ConvertTo-Html`, which encodes every value (covered by the existing escaping tests); file paths come only from the operator's command line and config; no deserialisation beyond `ConvertFrom-Json` of operator files; no dated or era-performing comments, AI mentions, author tags or debug leftovers were found.
+
+**Tests written first and seen failing:** `test/unit/Resolve-VAExactEntity.tests.ps1`, `test/unit/ConvertTo-VACsvSafe.tests.ps1`, new contexts in `test/unit/Remove-VAVirtualMachine.tests.ps1`, `test/unit/Invoke-VALoadBalance.tests.ps1`, `test/unit/Set-VAHardening.tests.ps1`, `test/unit/Test-VAVMRequest.tests.ps1`, `test/unit/Get-VAPerformanceAlert.tests.ps1`, `test/unit/Send-VAAlertMail.tests.ps1`, `test/unit/Invoke-VAProvisioningBatch.tests.ps1`, `test/integration/ProvisioningBatch.tests.ps1` (a `dc0*` row deleted `dc01` before the fix), `test/integration/HealthCheck.tests.ps1` and `test/simulator/FakePowerCLI.tests.ps1`. `test/integration/Secrets.tests.ps1` passed from the start (regression guard).
+
+**Acceptance:** `make test && docker compose run --rm demo`

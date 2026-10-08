@@ -6,8 +6,9 @@ function Send-VAAlertMail {
         Does nothing when there are no alerts, when alerts.smtp.server is empty or when
         alerts.smtp.to has no recipients. Otherwise sends one message from alerts.smtp.from to
         every address in alerts.smtp.to through alerts.smtp.server and alerts.smtp.port. The
-        subject counts the alerts by severity; the body lists one alert per line, Critical
-        first, then by entity type, entity and metric.
+        subject counts the alerts by severity (Unknown rows, which mean no samples, are counted
+        only when there are any); the body lists one alert per line, Critical first, then
+        Warning, then the rest, each group by entity type, entity and metric.
     #>
     [CmdletBinding(SupportsShouldProcess=$true)]
     param(
@@ -42,11 +43,16 @@ function Send-VAAlertMail {
     ))
     $critical = @($sorted | Where-Object { $_.Severity -eq 'Critical' }).Count
     $warning = @($sorted | Where-Object { $_.Severity -eq 'Warning' }).Count
+    $unknown = @($sorted | Where-Object { $_.Severity -eq 'Unknown' }).Count
 
-    $subject = '[vmware-automation] {0}: {1} critical, {2} warning' -f $Config.cluster, $critical, $warning
+    $counts = '{0} critical, {1} warning' -f $critical, $warning
+    if ($unknown -gt 0) {
+        $counts = '{0}, {1} unknown' -f $counts, $unknown
+    }
+    $subject = '[vmware-automation] {0}: {1}' -f $Config.cluster, $counts
     $lines = @(
         ('Cluster: {0}' -f $Config.cluster),
-        ('Alerts:  {0} critical, {1} warning' -f $critical, $warning),
+        ('Alerts:  {0}' -f $counts),
         ''
     )
     foreach ($row in $sorted) {

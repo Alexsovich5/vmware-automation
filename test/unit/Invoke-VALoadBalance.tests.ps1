@@ -5,6 +5,7 @@ $src = Join-Path $repo 'src/VMwareAutomation'
 . (Join-Path $src 'Private/Get-VANow.ps1')
 . (Join-Path $src 'Private/Write-VALog.ps1')
 . (Join-Path $src 'Private/Read-VAConfig.ps1')
+. (Join-Path $src 'Private/Resolve-VAExactEntity.ps1')
 . (Join-Path $src 'Public/Get-VALoadBalancePlan.ps1')
 . (Join-Path $src 'Public/Invoke-VALoadBalance.ps1')
 
@@ -22,6 +23,12 @@ function New-TestMove {
         Order = $Order; VM = $VM; MemoryGB = 8; Source = $Source; Destination = $Destination
         SpreadBefore = $Before; SpreadAfter = $After
     })
+}
+
+# Inventory lookups return one object named exactly as asked.
+function Set-InventoryMocks {
+    Mock Get-VM { New-Object psobject -Property @{ Name = @($Name)[0]; Kind = 'VM' } }
+    Mock Get-VMHost { New-Object psobject -Property @{ Name = @($Name)[0]; Kind = 'VMHost' } }
 }
 
 function Get-TestPlan {
@@ -50,7 +57,8 @@ Describe 'Invoke-VALoadBalance' {
         $config = Get-TestConfig
         $global:VAMoved = @()
         Mock Get-VALoadBalancePlan { Get-TestPlan }
-        Mock Move-VM { $global:VAMoved += ('{0}>{1}' -f @($VM)[0], $Destination) }
+        Set-InventoryMocks
+        Mock Move-VM { $global:VAMoved += ('{0}>{1}' -f @($VM)[0].Name, $Destination.Name) }
 
         $rows = @(Invoke-VALoadBalance -Config $config -Confirm:$false)
 
@@ -60,6 +68,9 @@ Describe 'Invoke-VALoadBalance' {
         It 'moves each VM to its destination, in plan order, without prompting' {
             ($global:VAMoved -join ',') | Should Be 'app-busy01>esx01.lab.local,app03>esx01.lab.local'
             Assert-MockCalled Move-VM -Times 2 -Exactly -ParameterFilter { $PSBoundParameters['Confirm'] -eq $false }
+        }
+        It 'passes the resolved VM and host objects, not names that Move-VM would expand' {
+            Assert-MockCalled Move-VM -Times 2 -Exactly -ParameterFilter { @($VM)[0].Kind -eq 'VM' -and $Destination.Kind -eq 'VMHost' }
         }
         It 'returns a Moved row per move' {
             $rows.Count | Should Be 2
@@ -81,13 +92,14 @@ Describe 'Invoke-VALoadBalance' {
     Context 'a plan passed in' {
         $config = Get-TestConfig
         Mock Get-VALoadBalancePlan { Get-TestPlan }
+        Set-InventoryMocks
         Mock Move-VM {}
 
         $rows = @(Invoke-VALoadBalance -Config $config -Plan @(New-TestMove 1 'build01' 'esx03.lab.local' 'esx02.lab.local' 30 20) -Confirm:$false)
 
         It 'uses it instead of planning again' {
             Assert-MockCalled Get-VALoadBalancePlan -Times 0 -Exactly
-            Assert-MockCalled Move-VM -Times 1 -Exactly -ParameterFilter { @($VM)[0] -eq 'build01' -and $Destination -eq 'esx02.lab.local' }
+            Assert-MockCalled Move-VM -Times 1 -Exactly -ParameterFilter { @($VM)[0].Name -eq 'build01' -and $Destination.Name -eq 'esx02.lab.local' }
             $rows[0].VM | Should Be 'build01'
         }
     }
@@ -111,11 +123,69 @@ Describe 'Invoke-VALoadBalance' {
     Context 'a failed migration' {
         $config = Get-TestConfig
         Mock Get-VALoadBalancePlan { Get-TestPlan }
+        Set-InventoryMocks
         Mock Move-VM { throw 'The operation is not allowed in the current state.' }
 
         It 'stops at the first failure' {
             { Invoke-VALoadBalance -Config $config -Confirm:$false } | Should Throw 'not allowed'
             Assert-MockCalled Move-VM -Times 1 -Exactly
+        }
+    }
+
+    Context 'a plan with a wildcard VM name' {
+        $config = Get-TestConfig
+        Set-InventoryMocks
+        Mock Move-VM {}
+
+        It 'is refused' {
+            { Invoke-VALoadBalance -Config $config -Plan @(New-TestMove 1 'app*' 'esx03.lab.local' 'esx01.lab.local' 30 20) -Confirm:$false } |
+                Should Throw 'wildcard'
+        }
+        It 'moves nothing and looks nothing up' {
+            Assert-MockCalled Move-VM -Times 0 -Exactly
+            Assert-MockCalled Get-VM -Times 0 -Exactly
+        }
+    }
+
+    Context 'a plan with a wildcard destination' {
+        $config = Get-TestConfig
+        Set-InventoryMocks
+        Mock Move-VM {}
+
+        It 'is refused and moves nothing' {
+            { Invoke-VALoadBalance -Config $config -Plan @(New-TestMove 1 'app01' 'esx03.lab.local' 'esx0?.lab.local' 30 20) -Confirm:$false } |
+                Should Throw 'wildcard'
+            Assert-MockCalled Move-VM -Times 0 -Exactly
+        }
+    }
+
+    Context 'a plan that names an excluded VM' {
+        $config = Get-TestConfig
+        Set-InventoryMocks
+        Mock Move-VM {}
+
+        It 'is refused (excludeVMs holds vcsa), whatever the case' {
+            { Invoke-VALoadBalance -Config $config -Plan @(New-TestMove 1 'VCSA' 'esx02.lab.local' 'esx01.lab.local' 30 20) -Confirm:$false } |
+                Should Throw 'excluded'
+        }
+        It 'moves nothing' {
+            Assert-MockCalled Move-VM -Times 0 -Exactly
+        }
+    }
+
+    Context 'a VM name shared by two VMs' {
+        $config = Get-TestConfig
+        Mock Get-VM {
+            New-Object psobject -Property @{ Name = 'app01'; Id = 'vm-1' }
+            New-Object psobject -Property @{ Name = 'app01'; Id = 'vm-2' }
+        }
+        Mock Get-VMHost { New-Object psobject -Property @{ Name = @($Name)[0] } }
+        Mock Move-VM {}
+
+        It 'is refused and moves nothing' {
+            { Invoke-VALoadBalance -Config $config -Plan @(New-TestMove 1 'app01' 'esx03.lab.local' 'esx01.lab.local' 30 20) -Confirm:$false } |
+                Should Throw 'ambiguous'
+            Assert-MockCalled Move-VM -Times 0 -Exactly
         }
     }
 

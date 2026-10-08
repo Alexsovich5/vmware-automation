@@ -8,6 +8,7 @@ $src = Join-Path $repo 'src/VMwareAutomation'
 . (Join-Path $src 'Private/Test-VAVMRequest.ps1')
 . (Join-Path $src 'Private/Select-VAPlacementHost.ps1')
 . (Join-Path $src 'Private/Select-VADatastore.ps1')
+. (Join-Path $src 'Private/ConvertTo-VACsvSafe.ps1')
 . (Join-Path $src 'Public/New-VAVirtualMachine.ps1')
 . (Join-Path $src 'Public/Remove-VAVirtualMachine.ps1')
 . (Join-Path $src 'Public/Invoke-VAProvisioningBatch.ps1')
@@ -116,6 +117,28 @@ Describe 'Invoke-VAProvisioningBatch' {
         }
         It 'has one data line per request' {
             $lines.Count | Should Be 2
+        }
+    }
+
+    Context 'request values that a spreadsheet would run as formulas' {
+        $config = Get-TestConfig
+        Set-BatchMocks
+        $requests = New-RequestFile -FileName 'formula.csv' -Line @(
+            'Deprovision,=2+3,,,,,x',
+            '@SUM(1),web-05,,,,,x'
+        )
+        $resultPath = Join-Path $TestDrive 'out/formula-results.csv'
+
+        $rows = @(Invoke-VAProvisioningBatch -Config $config -RequestPath $requests -ResultPath $resultPath -Confirm:$false)
+        $written = @(Import-Csv -Path $resultPath)
+
+        It 'writes them to the result CSV prefixed with a single quote' {
+            $written[0].Name | Should BeExactly '''=2+3'
+            $written[1].Action | Should BeExactly '''@SUM(1)'
+        }
+        It 'returns the original values to the caller' {
+            $rows[0].Name | Should BeExactly '=2+3'
+            $rows[1].Action | Should BeExactly '@SUM(1)'
         }
     }
 

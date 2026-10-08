@@ -29,6 +29,26 @@ $lowerHostMemoryAndFreeDatastore = {
     }
 }
 
+$dropEsx01Realtime = {
+    param($State)
+    $State.stats = @($State.stats | Where-Object { -not ($_.entity -eq 'esx01.lab.local' -and [int]$_.intervalSecs -eq 20) })
+}
+
+$quietLabWithoutEsx01Samples = {
+    param($State)
+    & $lowerHostMemoryAndFreeDatastore $State
+    & $dropEsx01Realtime $State
+}
+
+$formulaDatastore = {
+    param($State)
+    & $lowerHostMemoryAndFreeDatastore $State
+    $State.datastores = @($State.datastores) + (New-Object psobject -Property ([ordered]@{
+        name = '=HYPERLINK("http://example.invalid/","open")'; id = 'Datastore-datastore-90'; type = 'VMFS'
+        capacityGB = 100; freeSpaceGB = 5; hosts = @('esx01.lab.local')
+    }))
+}
+
 Describe 'scripts/Invoke-HealthCheck.ps1' {
 
     Context 'the fixture lab' {
@@ -100,6 +120,50 @@ Describe 'scripts/Invoke-HealthCheck.ps1' {
         }
         It 'still writes an alerts.csv under outputDir' {
             (Join-Path $TestDrive 'out/alerts.csv') | Should Exist
+        }
+    }
+
+    Context 'esx01.lab.local returns no realtime samples and nothing else is wrong' {
+        $configPath = New-FakeViState -Mutate $quietLabWithoutEsx01Samples
+        $run = Invoke-HealthCheckScript -Argument @('-ConfigPath', $configPath)
+        $rows = @(Import-Csv -Path (Join-Path $TestDrive 'out/alerts.csv'))
+
+        It 'exits 3 instead of reporting OK' {
+            $run.ExitCode | Should Be 3
+        }
+        It 'prints an UNKNOWN status line' {
+            $run.Output | Should Match 'UNKNOWN'
+        }
+        It 'lists the missing host metrics as Unknown in alerts.csv' {
+            $rows.Count | Should Be 2
+            @($rows | Where-Object { $_.Severity -eq 'Unknown' -and $_.Entity -eq 'esx01.lab.local' }).Count | Should Be 2
+        }
+    }
+
+    Context 'esx01.lab.local without samples while esx03.lab.local is critical' {
+        $configPath = New-FakeViState -Mutate $dropEsx01Realtime
+        $run = Invoke-HealthCheckScript -Argument @('-ConfigPath', $configPath)
+
+        It 'exits 2: a known critical outranks unknown' {
+            $run.ExitCode | Should Be 2
+        }
+    }
+
+    Context 'a datastore whose name is a spreadsheet formula' {
+        $configPath = New-FakeViState -Mutate $formulaDatastore
+        $run = Invoke-HealthCheckScript -Argument @('-ConfigPath', $configPath)
+        $rows = @(Import-Csv -Path (Join-Path $TestDrive 'out/alerts.csv'))
+
+        It 'raises the critical free-space alert' {
+            $run.ExitCode | Should Be 2
+        }
+        It 'writes the name to alerts.csv prefixed with a single quote' {
+            $rows.Count | Should Be 1
+            $rows[0].Entity | Should BeExactly '''=HYPERLINK("http://example.invalid/","open")'
+        }
+        It 'keeps numeric columns as plain numbers' {
+            $rows[0].Value | Should Be '5'
+            $rows[0].Threshold | Should Be '10'
         }
     }
 

@@ -75,6 +75,45 @@ Describe 'scripts/Invoke-Provisioning.ps1' {
         }
     }
 
+    Context 'wildcard and duplicate names in Deprovision rows' {
+        # A second VM named web-01 (vCenter allows equal names in different folders).
+        $configPath = New-FakeViState -Mutate {
+            param($State)
+            $copy = (@($State.vms | Where-Object { $_.name -eq 'web-01' })[0]) | ConvertTo-Json -Depth 5 | ConvertFrom-Json
+            $copy.id = 'VirtualMachine-vm-990'
+            $copy.powerState = 'PoweredOff'
+            $State.vms = @($State.vms) + $copy
+        }
+        $wild = Join-Path $TestDrive 'wild.csv'
+        Set-Content -Path $wild -Encoding UTF8 -Value @(
+            'Action,Name,Template,NumCpu,MemoryMB,Datastore,Notes',
+            'Deprovision,dc0*,,,,,matches the protected dc01',
+            'Deprovision,old-0?,,,,,matches old-01',
+            'Deprovision,web-01,,,,,two VMs carry this name'
+        )
+        $run = Invoke-ProvisioningScript -Argument @('-ConfigPath', $configPath, '-RequestPath', $wild)
+        $state = Read-StateFile
+        $results = @(Get-ChildItem -Path (Join-Path $TestDrive 'out') -Filter 'provisioning-*.csv' | Sort-Object LastWriteTime | Select-Object -Last 1)
+        $rows = @(Import-Csv -Path $results[0].FullName)
+
+        It 'exits 1' {
+            $run.ExitCode | Should Be 1
+        }
+        It 'keeps the protected dc01 and old-01' {
+            @($state.vms | Where-Object { $_.name -eq 'dc01' }).Count | Should Be 1
+            @($state.vms | Where-Object { $_.name -eq 'old-01' }).Count | Should Be 1
+        }
+        It 'keeps both VMs named web-01' {
+            @($state.vms | Where-Object { $_.name -eq 'web-01' }).Count | Should Be 2
+        }
+        It 'records every row as Failed with the reason' {
+            @($rows | Where-Object { $_.Status -eq 'Failed' }).Count | Should Be 3
+            $rows[0].Message | Should Match 'wildcard'
+            $rows[1].Message | Should Match 'wildcard'
+            $rows[2].Message | Should Match 'ambiguous'
+        }
+    }
+
     Context '-WhatIf' {
         $configPath = New-FakeViState
         $before = (Get-FileHash -Path $env:FAKEVI_STATE -Algorithm SHA256).Hash
