@@ -1,0 +1,28 @@
+{
+  "vCenter":   { "server": "vcsa.lab.local", "user": "administrator@vsphere.local", "passwordEnv": "VA_VCENTER_PASSWORD" },
+  "cluster":   "Lab-Cluster",
+  "logDir":    "../logs",
+  "outputDir": "../out",
+  "provisioning": {
+    "templates": { "tpl-w2k12r2": { "diskGB": 40 }, "tpl-centos65": { "diskGB": 16 } },
+    "limits":    { "minCpu": 1, "maxCpu": 8, "minMemoryMB": 512, "maxMemoryMB": 32768 },
+    "datastoreReservePct": 10,
+    "hostMaxMemoryPct": 85,
+    "protectedVMs": [ "vcsa", "dc01" ]
+  },
+  "capacity":    { "standardVm": { "numCpu": 2, "memoryMB": 4096, "diskGB": 40 }, "maxVcpuPerCore": 4, "haReserveHosts": 1 },
+  "rightsizing": { "days": 7, "cpuLowAvgPct": 10, "cpuLowPeakPct": 30, "cpuHighAvgPct": 80, "memLowAvgPct": 20, "memHighAvgPct": 90, "minMemoryMB": 1024 },
+  "loadBalance": { "thresholdPct": 20, "maxMigrations": 3, "destMaxMemoryPct": 85, "excludeVMs": [ "vcsa" ] },
+  "alerts": {
+    "samples": 6,
+    "host":      { "cpu.usage.average": { "warn": 75, "crit": 90 }, "mem.usage.average": { "warn": 80, "crit": 95 } },
+    "vm":        { "cpu.usage.average": { "warn": 85, "crit": 95 }, "mem.usage.average": { "warn": 85, "crit": 95 } },
+    "datastoreFreePct": { "warn": 20, "crit": 10 },
+    "smtp": { "server": "", "port": 25, "from": "vmware-automation@lab.local", "to": [] }
+  },
+  "snapshots": {
+    "prefix": "auto", "staleDays": 14,
+    "policies": [ { "name": "daily", "vmNamePattern": "web-*", "retentionDays": 7, "maxSnapshots": 5, "memory": false, "quiesce": false } ]
+  },
+  "hardeningBaseline": "./hardening-baseline.json"
+}
