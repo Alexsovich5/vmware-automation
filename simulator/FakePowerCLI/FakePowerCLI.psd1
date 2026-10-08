@@ -17,7 +17,10 @@
         'Start-VM',
         'Stop-VM',
         'Remove-VM',
-        'Get-Stat'
+        'Get-Stat',
+        'Get-Snapshot',
+        'New-Snapshot',
+        'Remove-Snapshot'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()

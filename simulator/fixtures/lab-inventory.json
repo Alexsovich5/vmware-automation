@@ -61,6 +61,15 @@
     { "name": "old-01",     "id": "VirtualMachine-vm-113", "host": "esx03.lab.local", "datastore": "ds-sata02", "powerState": "PoweredOff",
       "numCpu": 2, "memoryMB": 8192,  "provisionedSpaceGB": 40,  "guestId": "windows7Server64Guest", "cpuUsageMhz": 0,    "notes": "retired" }
   ],
+  "snapshots": [
+    { "vm": "web-01", "name": "auto-daily-20140314-0200", "id": "VirtualMachineSnapshot-snapshot-201", "description": "Created by snapshot policy 'daily'", "offsetDays": -1,  "memory": false, "quiesced": false, "sizeGB": 1.2 },
+    { "vm": "web-01", "name": "auto-daily-20140313-0200", "id": "VirtualMachineSnapshot-snapshot-202", "description": "Created by snapshot policy 'daily'", "offsetDays": -2,  "memory": false, "quiesced": false, "sizeGB": 1.4 },
+    { "vm": "web-01", "name": "auto-daily-20140311-0200", "id": "VirtualMachineSnapshot-snapshot-203", "description": "Created by snapshot policy 'daily'", "offsetDays": -4,  "memory": false, "quiesced": false, "sizeGB": 2.1 },
+    { "vm": "web-01", "name": "auto-daily-20140309-0200", "id": "VirtualMachineSnapshot-snapshot-204", "description": "Created by snapshot policy 'daily'", "offsetDays": -6,  "memory": false, "quiesced": false, "sizeGB": 2.6 },
+    { "vm": "web-01", "name": "auto-daily-20140307-0200", "id": "VirtualMachineSnapshot-snapshot-205", "description": "Created by snapshot policy 'daily'", "offsetDays": -8,  "memory": false, "quiesced": false, "sizeGB": 3.0 },
+    { "vm": "web-01", "name": "auto-daily-20140305-0200", "id": "VirtualMachineSnapshot-snapshot-206", "description": "Created by snapshot policy 'daily'", "offsetDays": -10, "memory": false, "quiesced": false, "sizeGB": 3.3 },
+    { "vm": "web-01", "name": "pre-patch",                "id": "VirtualMachineSnapshot-snapshot-207", "description": "before OS patching",                 "offsetDays": -30, "memory": true,  "quiesced": false, "sizeGB": 6.8 }
+  ],
   "stats": [
     { "entity": "dc01", "stat": "cpu.usage.average", "unit": "%", "intervalSecs": 7200, "offsetMins": 0,
       "values": [ 13.9, 14.4, 15.3, 17.2, 19.1, 21, 21.9, 21.9, 20.1, 17.2, 14.4, 13.4, 13.4, 15.3, 16.3, 18.3, 20.3, 22.3, 23.3, 23.3, 21.3, 18.3, 15.3, 14.3, 14.3, 14.1, 15, 16.9, 18.7, 20.6, 21.5, 21.5, 19.6, 16.9, 14.1, 13.2, 13.2, 15.6, 16.6, 18.6, 20.7, 22.7, 23.8, 23.8, 21.7, 18.6, 15.6, 14.6, 14.6, 14.5, 15.5, 17.4, 19.3, 21.2, 22.2, 22.2, 20.3, 17.4, 14.5, 13.6, 13.6, 15.1, 16.1, 18.1, 20.1, 22.1, 23.1, 23.1, 21.1, 18.1, 15.1, 14.1, 14.1, 14.8, 15.8, 17.8, 19.7, 21.6, 22.6, 22.6, 20.7, 17.8, 14.8, 13.9, 13.9 ] },

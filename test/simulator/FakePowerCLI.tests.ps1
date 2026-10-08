@@ -26,7 +26,8 @@ Describe 'FakePowerCLI' {
         It 'exports the inventory and connection cmdlets' {
             foreach ($name in @('Connect-VIServer', 'Disconnect-VIServer', 'Get-Cluster', 'Get-VMHost',
                                 'Get-VM', 'Get-Template', 'Get-Datastore', 'New-VM', 'Set-VM', 'Start-VM',
-                                'Stop-VM', 'Remove-VM', 'Get-Stat')) {
+                                'Stop-VM', 'Remove-VM', 'Get-Stat', 'Get-Snapshot', 'New-Snapshot',
+                                'Remove-Snapshot')) {
                 ($exported -contains $name) | Should Be $true
             }
         }
@@ -410,6 +411,99 @@ Describe 'FakePowerCLI' {
             $before = (Get-FileHash -Path $env:FAKEVI_STATE -Algorithm SHA256).Hash
             $null = FakePowerCLI\Get-Stat -Entity $vms -Stat 'cpu.usage.average' -MaxSamples 1
             (Get-FileHash -Path $env:FAKEVI_STATE -Algorithm SHA256).Hash | Should Be $before
+        }
+        Reset-FakeViSession
+    }
+
+    Context 'snapshots' {
+        Reset-FakeViSession
+        $null = New-FakeViState
+        Import-Module $manifest -Force
+        $now = [datetime]$env:FAKEVI_NOW
+
+        It 'Get-Snapshot throws the not-connected error before connecting' {
+            { FakePowerCLI\Get-Snapshot -VM 'web-01' } | Should Throw 'You are not currently connected to any servers'
+        }
+
+        $null = Connect-FakeLab
+        $web01 = @(FakePowerCLI\Get-Snapshot -VM 'web-01')
+        $daily1 = @($web01 | Where-Object { $_.Name -eq 'auto-daily-20140314-0200' })
+        $prePatch = @($web01 | Where-Object { $_.Name -eq 'pre-patch' })
+
+        It 'seeds web-01 with six auto-daily snapshots and one manual snapshot' {
+            $web01.Count | Should Be 7
+            @($web01 | Where-Object { $_.Name -like 'auto-daily-*' }).Count | Should Be 6
+            $prePatch.Count | Should Be 1
+        }
+        It 'dates seed snapshots as day offsets from FAKEVI_NOW' {
+            $daily1[0].Created | Should Be $now.AddDays(-1)
+            $prePatch[0].Created | Should Be $now.AddDays(-30)
+            $ages = @($web01 | Where-Object { $_.Name -like 'auto-daily-*' } | ForEach-Object { [int]($now - $_.Created).TotalDays } | Sort-Object)
+            ($ages -join ',') | Should Be '1,2,4,6,8,10'
+        }
+        It 'returns PowerCLI-shaped snapshots' {
+            $daily1[0].VM.Name | Should Be 'web-01'
+            $daily1[0].VMId | Should Be 'VirtualMachine-vm-102'
+            ($daily1[0].Id -like 'VirtualMachineSnapshot-snapshot-*') | Should Be $true
+            $daily1[0].PSObject.TypeNames[0] | Should Be 'VMware.VimAutomation.ViCore.Impl.V1.VM.SnapshotImpl'
+        }
+        It 'returns nothing for a VM without snapshots' {
+            @(FakePowerCLI\Get-Snapshot -VM 'web-02').Count | Should Be 0
+        }
+        It 'filters by -Name with wildcards' {
+            @(FakePowerCLI\Get-Snapshot -VM 'web-01' -Name 'pre-*').Count | Should Be 1
+        }
+        It 'accepts VM objects from the pipeline' {
+            @(FakePowerCLI\Get-VM -Name 'web-*' | FakePowerCLI\Get-Snapshot).Count | Should Be 7
+        }
+
+        $before = (Get-FileHash -Path $env:FAKEVI_STATE -Algorithm SHA256).Hash
+        $null = FakePowerCLI\New-Snapshot -VM 'web-02' -Name 'x' -WhatIf
+        $null = FakePowerCLI\Remove-Snapshot -Snapshot $prePatch[0] -WhatIf
+
+        It 'New-Snapshot and Remove-Snapshot honour -WhatIf' {
+            (Get-FileHash -Path $env:FAKEVI_STATE -Algorithm SHA256).Hash | Should Be $before
+        }
+
+        $created = FakePowerCLI\New-Snapshot -VM 'web-02' -Name 'auto-daily-20140315-0200' -Description 'policy daily' -Quiesce
+
+        It 'New-Snapshot stamps Created with FAKEVI_NOW and returns the snapshot' {
+            $created.Name | Should Be 'auto-daily-20140315-0200'
+            $created.Created | Should Be $now
+            $created.Description | Should Be 'policy daily'
+            $created.Quiesced | Should Be $true
+            $created.VM.Name | Should Be 'web-02'
+            @(FakePowerCLI\Get-Snapshot -VM 'web-02').Count | Should Be 1
+        }
+        It 'gives a new snapshot an id no other snapshot has' {
+            @(FakePowerCLI\Get-Snapshot -VM 'web-01' | Where-Object { $_.Id -eq $created.Id }).Count | Should Be 0
+        }
+        It 'keeps the Created time of a new snapshot when FAKEVI_NOW moves on' {
+            $saved = $env:FAKEVI_NOW
+            $env:FAKEVI_NOW = '2014-03-20T02:00:00'
+            $later = @(FakePowerCLI\Get-Snapshot -VM 'web-02')[0].Created
+            $env:FAKEVI_NOW = $saved
+            $later | Should Be $now
+        }
+        It 'New-Snapshot writes the not-found error for an unknown VM' {
+            { FakePowerCLI\New-Snapshot -VM 'nope-01' -Name 'x' -Confirm:$false -ErrorAction Stop } | Should Throw 'nope-01'
+        }
+
+        $null = FakePowerCLI\Remove-Snapshot -Snapshot $prePatch[0] -Confirm:$false
+
+        It 'Remove-Snapshot deletes only that snapshot' {
+            $left = @(FakePowerCLI\Get-Snapshot -VM 'web-01')
+            $left.Count | Should Be 6
+            @($left | Where-Object { $_.Name -eq 'pre-patch' }).Count | Should Be 0
+        }
+        It 'Remove-Snapshot writes an error for a snapshot that is gone' {
+            { FakePowerCLI\Remove-Snapshot -Snapshot $prePatch[0] -Confirm:$false -ErrorAction Stop } | Should Throw 'pre-patch'
+        }
+        It 'Remove-VM drops the snapshots of the removed VM' {
+            $null = FakePowerCLI\Stop-VM -VM 'web-02' -Confirm:$false
+            $null = FakePowerCLI\Remove-VM -VM 'web-02' -Confirm:$false
+            $state = (Get-Content -Path $env:FAKEVI_STATE) -join "`n" | ConvertFrom-Json
+            @($state.snapshots | Where-Object { $_.vm -eq 'web-02' }).Count | Should Be 0
         }
         Reset-FakeViSession
     }

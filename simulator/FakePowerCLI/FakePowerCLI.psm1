@@ -690,7 +690,8 @@ function Stop-VM {
     }
 }
 
-# Unregisters the VM; with -DeletePermanently its provisioned space goes back to the datastore.
+# Unregisters the VM and drops its snapshots; with -DeletePermanently its provisioned space goes
+# back to the datastore.
 # Like vCenter, it refuses a VM that is still powered on.
 function Remove-VM {
     [CmdletBinding(SupportsShouldProcess=$true, ConfirmImpact='High')]
@@ -726,6 +727,9 @@ function Remove-VM {
         }
         if ($removed.Count -gt 0) {
             $state.vms = @($state.vms | Where-Object { $removed -notcontains $_.name })
+            if ($state.PSObject.Properties['snapshots']) {
+                $state.snapshots = @($state.snapshots | Where-Object { $_ -and $removed -notcontains $_.vm })
+            }
             Save-FakeViState -State $state
         }
     }
@@ -863,6 +867,200 @@ function Get-Stat {
     }
 }
 
+# ---------------------------------------------------------------------------------------------
+# Snapshots
+# ---------------------------------------------------------------------------------------------
+
+# Snapshot records live in the state's "snapshots" list, one per snapshot, keyed by "vm".
+# Seed records carry "offsetDays" (days from the simulated now); records written by
+# New-Snapshot carry an absolute "created" time, so they keep their age when FAKEVI_NOW moves.
+function Get-FakeViSnapshotRecord {
+    param([psobject]$State)
+    if ($State.PSObject.Properties['snapshots']) {
+        return @($State.snapshots | Where-Object { $_ })
+    }
+    @()
+}
+
+function Get-FakeViSnapshotCreated {
+    param([psobject]$Record)
+    if ($Record.PSObject.Properties['created'] -and $Record.created) {
+        return [datetime]$Record.created
+    }
+    (Get-FakeViNow).AddDays([double]$Record.offsetDays)
+}
+
+function ConvertTo-FakeViSnapshot {
+    param(
+        [psobject]$State,
+        [psobject]$Record
+    )
+    $vmRecord = @($State.vms | Where-Object { $_.name -eq $Record.vm })
+    $vm = $null
+    $vmId = $null
+    if ($vmRecord.Count -gt 0) {
+        $vm = ConvertTo-FakeViVM -State $State -Record $vmRecord[0]
+        $vmId = $vmRecord[0].id
+    }
+    $created = Get-FakeViSnapshotCreated -Record $Record
+    $newer = @(Get-FakeViSnapshotRecord -State $State | Where-Object {
+        $_.vm -eq $Record.vm -and (Get-FakeViSnapshotCreated -Record $_) -gt $created
+    })
+    $powerState = 'PoweredOff'
+    if ($Record.memory) {
+        $powerState = 'PoweredOn'
+    }
+    $obj = New-Object psobject -Property @{
+        Name        = $Record.name
+        Id          = $Record.id
+        Description = $Record.description
+        Created     = $created
+        Quiesced    = [bool]$Record.quiesced
+        PowerState  = $powerState
+        SizeGB      = [decimal]$Record.sizeGB
+        SizeMB      = [decimal]$Record.sizeGB * 1024
+        IsCurrent   = ($newer.Count -eq 0)
+        VM          = $vm
+        VMId        = $vmId
+    }
+    $obj.PSObject.TypeNames.Insert(0, 'VMware.VimAutomation.ViCore.Impl.V1.VM.SnapshotImpl')
+    $obj
+}
+
+# Next free "VirtualMachineSnapshot-snapshot-<n>" id.
+function New-FakeViSnapshotId {
+    param([psobject]$State)
+    $max = 200
+    foreach ($item in (Get-FakeViSnapshotRecord -State $State)) {
+        if ($item.id -match '-snapshot-(\d+)$') {
+            $n = [int]$Matches[1]
+            if ($n -gt $max) { $max = $n }
+        }
+    }
+    'VirtualMachineSnapshot-snapshot-{0}' -f ($max + 1)
+}
+
+function Get-Snapshot {
+    [CmdletBinding()]
+    param(
+        [Parameter(Position=0, ValueFromPipeline=$true)]
+        [object[]]$VM,
+        [string[]]$Name,
+        [string[]]$Id,
+        [object[]]$Server
+    )
+
+    begin {
+        $vmArgs = @()
+    }
+    process {
+        $vmArgs += @($VM | Where-Object { $null -ne $_ })
+    }
+    end {
+        Assert-FakeViConnected
+        $state = Get-FakeViState
+        $records = @(Get-FakeViSnapshotRecord -State $state)
+        if ($vmArgs.Count -gt 0) {
+            $vmNames = @(Get-FakeViVMRecord -State $state -VM $vmArgs | ForEach-Object { $_.name })
+            $records = @($records | Where-Object { $vmNames -contains $_.vm })
+        }
+        if ($Id) {
+            $records = @($records | Where-Object { $Id -contains $_.id })
+        }
+        if ($Name) {
+            $records = @($records | Where-Object {
+                $record = $_
+                @($Name | Where-Object { $record.name -like $_ }).Count -gt 0
+            })
+        }
+        foreach ($record in $records) {
+            ConvertTo-FakeViSnapshot -State $state -Record $record
+        }
+    }
+}
+
+function New-Snapshot {
+    [CmdletBinding(SupportsShouldProcess=$true)]
+    param(
+        [Parameter(Position=0, ValueFromPipeline=$true)]
+        [object[]]$VM,
+        [string]$Name,
+        [string]$Description,
+        [switch]$Memory,
+        [switch]$Quiesce,
+        [switch]$RunAsync,
+        [object[]]$Server
+    )
+
+    process {
+        Assert-FakeViConnected
+        $state = Get-FakeViState
+        $added = @()
+        foreach ($vmRecord in @(Get-FakeViVMRecord -State $state -VM $VM)) {
+            if (-not $PSCmdlet.ShouldProcess($vmRecord.name, ("Create snapshot '{0}'" -f $Name))) {
+                continue
+            }
+            $record = New-Object psobject -Property ([ordered]@{
+                vm          = $vmRecord.name
+                name        = $Name
+                id          = New-FakeViSnapshotId -State $state
+                description = $(if ($Description) { $Description } else { '' })
+                created     = (Get-FakeViNow).ToString('s')
+                memory      = [bool]$Memory
+                quiesced    = [bool]$Quiesce
+                sizeGB      = 0
+            })
+            if ($state.PSObject.Properties['snapshots']) {
+                $state.snapshots = @(@(Get-FakeViSnapshotRecord -State $state) + $record)
+            }
+            else {
+                $state | Add-Member -MemberType NoteProperty -Name 'snapshots' -Value @($record)
+            }
+            $added += $record
+        }
+        if ($added.Count -gt 0) {
+            Save-FakeViState -State $state
+            foreach ($record in $added) {
+                ConvertTo-FakeViSnapshot -State $state -Record $record
+            }
+        }
+    }
+}
+
+# Deletes snapshots given as Get-Snapshot objects, matched by Id. Snapshots are kept as a flat
+# list per VM, so -RemoveChildren is accepted but has nothing extra to remove.
+function Remove-Snapshot {
+    [CmdletBinding(SupportsShouldProcess=$true, ConfirmImpact='High')]
+    param(
+        [Parameter(Position=0, ValueFromPipeline=$true)]
+        [object[]]$Snapshot,
+        [switch]$RemoveChildren,
+        [switch]$RunAsync
+    )
+
+    process {
+        Assert-FakeViConnected
+        $state = Get-FakeViState
+        $records = @(Get-FakeViSnapshotRecord -State $state)
+        $removedIds = @()
+        foreach ($item in @($Snapshot | Where-Object { $null -ne $_ })) {
+            $match = @($records | Where-Object { $_.id -eq $item.Id })
+            if ($match.Count -eq 0) {
+                Write-Error -Message ("Could not find Snapshot with name '{0}'." -f $item.Name) -Category ObjectNotFound -TargetObject $item
+                continue
+            }
+            if (-not $PSCmdlet.ShouldProcess($match[0].vm, ("Remove snapshot '{0}'" -f $match[0].name))) {
+                continue
+            }
+            $removedIds += $match[0].id
+        }
+        if ($removedIds.Count -gt 0) {
+            $state.snapshots = @($records | Where-Object { $removedIds -notcontains $_.id })
+            Save-FakeViState -State $state
+        }
+    }
+}
+
 Export-ModuleMember -Function @(
     'Connect-VIServer',
     'Disconnect-VIServer',
@@ -876,5 +1074,8 @@ Export-ModuleMember -Function @(
     'Start-VM',
     'Stop-VM',
     'Remove-VM',
-    'Get-Stat'
+    'Get-Stat',
+    'Get-Snapshot',
+    'New-Snapshot',
+    'Remove-Snapshot'
 )
