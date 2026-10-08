@@ -14,7 +14,9 @@
         'Get-Datastore',
         'New-VM',
         'Set-VM',
-        'Start-VM'
+        'Start-VM',
+        'Stop-VM',
+        'Remove-VM'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()

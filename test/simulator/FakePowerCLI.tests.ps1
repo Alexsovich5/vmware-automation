@@ -25,7 +25,8 @@ Describe 'FakePowerCLI' {
 
         It 'exports the inventory and connection cmdlets' {
             foreach ($name in @('Connect-VIServer', 'Disconnect-VIServer', 'Get-Cluster', 'Get-VMHost',
-                                'Get-VM', 'Get-Template', 'Get-Datastore', 'New-VM', 'Set-VM', 'Start-VM')) {
+                                'Get-VM', 'Get-Template', 'Get-Datastore', 'New-VM', 'Set-VM', 'Start-VM',
+                                'Stop-VM', 'Remove-VM')) {
                 ($exported -contains $name) | Should Be $true
             }
         }
@@ -278,6 +279,57 @@ Describe 'FakePowerCLI' {
 
         It 'the provisioning cmdlets honour -WhatIf' {
             (Get-FileHash -Path $env:FAKEVI_STATE -Algorithm SHA256).Hash | Should Be $before
+        }
+        Reset-FakeViSession
+    }
+
+    Context 'deprovisioning cmdlets' {
+        Reset-FakeViSession
+        $null = New-FakeViState
+        Import-Module $manifest -Force
+        $null = Connect-FakeLab
+
+        $before = (Get-FileHash -Path $env:FAKEVI_STATE -Algorithm SHA256).Hash
+        $null = FakePowerCLI\Stop-VM -VM 'test-01' -WhatIf
+        $null = FakePowerCLI\Remove-VM -VM 'old-01' -DeletePermanently -WhatIf
+
+        It 'Stop-VM and Remove-VM honour -WhatIf' {
+            (Get-FileHash -Path $env:FAKEVI_STATE -Algorithm SHA256).Hash | Should Be $before
+        }
+        It 'Remove-VM refuses a powered-on VM' {
+            { FakePowerCLI\Remove-VM -VM 'test-01' -DeletePermanently -Confirm:$false } |
+                Should Throw 'cannot be performed in the current state (Powered on)'
+            @(FakePowerCLI\Get-VM -Name 'test-01').Count | Should Be 1
+        }
+
+        $stopped = FakePowerCLI\Stop-VM -VM 'test-01' -Confirm:$false
+
+        It 'Stop-VM powers the VM off and returns it' {
+            $stopped.Name | Should Be 'test-01'
+            $stopped.PowerState | Should Be 'PoweredOff'
+            (FakePowerCLI\Get-VM -Name 'test-01').PowerState | Should Be 'PoweredOff'
+        }
+        It 'a stopped VM no longer counts towards host memory' {
+            (FakePowerCLI\Get-VMHost -Name 'esx01.lab.local').MemoryUsageGB | Should Be 8
+        }
+
+        $null = FakePowerCLI\Remove-VM -VM $stopped -DeletePermanently -Confirm:$false
+
+        It 'Remove-VM takes the VM out of the inventory' {
+            @(FakePowerCLI\Get-VM -Name 'test-*').Count | Should Be 0
+        }
+        It 'Remove-VM -DeletePermanently gives the disk space back to the datastore' {
+            (FakePowerCLI\Get-Datastore -Name 'ds-sata01').FreeSpaceGB | Should Be 716
+        }
+
+        $null = FakePowerCLI\Remove-VM -VM 'old-01' -Confirm:$false
+
+        It 'Remove-VM without -DeletePermanently only unregisters the VM' {
+            @(FakePowerCLI\Get-VM -Name 'old-*').Count | Should Be 0
+            (FakePowerCLI\Get-Datastore -Name 'ds-sata02').FreeSpaceGB | Should Be 150
+        }
+        It 'Remove-VM writes the not-found error for an unknown VM' {
+            { FakePowerCLI\Remove-VM -VM 'nope-01' -Confirm:$false -ErrorAction Stop } | Should Throw 'nope-01'
         }
         Reset-FakeViSession
     }

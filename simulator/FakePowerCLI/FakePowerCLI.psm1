@@ -659,6 +659,78 @@ function Start-VM {
     }
 }
 
+function Stop-VM {
+    [CmdletBinding(SupportsShouldProcess=$true, ConfirmImpact='High')]
+    param(
+        [Parameter(Position=0, ValueFromPipeline=$true)]
+        [object[]]$VM,
+        [switch]$Kill,
+        [switch]$RunAsync,
+        [object[]]$Server
+    )
+
+    process {
+        Assert-FakeViConnected
+        $state = Get-FakeViState
+        $changed = $false
+        $records = @(Get-FakeViVMRecord -State $state -VM $VM)
+        foreach ($record in $records) {
+            if (-not $PSCmdlet.ShouldProcess($record.name, 'Power off VM')) {
+                continue
+            }
+            $record.powerState = 'PoweredOff'
+            $changed = $true
+        }
+        if ($changed) {
+            Save-FakeViState -State $state
+            foreach ($record in $records) {
+                ConvertTo-FakeViVM -State $state -Record $record
+            }
+        }
+    }
+}
+
+# Unregisters the VM; with -DeletePermanently its provisioned space goes back to the datastore.
+# Like vCenter, it refuses a VM that is still powered on.
+function Remove-VM {
+    [CmdletBinding(SupportsShouldProcess=$true, ConfirmImpact='High')]
+    param(
+        [Parameter(Position=0, ValueFromPipeline=$true)]
+        [object[]]$VM,
+        [switch]$DeletePermanently,
+        [switch]$RunAsync,
+        [object[]]$Server
+    )
+
+    process {
+        Assert-FakeViConnected
+        $state = Get-FakeViState
+        $removed = @()
+        foreach ($record in @(Get-FakeViVMRecord -State $state -VM $VM)) {
+            if ($record.powerState -eq 'PoweredOn') {
+                throw ("The attempted operation cannot be performed in the current state (Powered on). (VM '{0}')" -f $record.name)
+            }
+            $action = 'Remove VM from inventory'
+            if ($DeletePermanently) {
+                $action = 'Remove VM and delete its files from disk'
+            }
+            if (-not $PSCmdlet.ShouldProcess($record.name, $action)) {
+                continue
+            }
+            if ($DeletePermanently) {
+                foreach ($ds in @($state.datastores | Where-Object { $_.name -eq $record.datastore })) {
+                    $ds.freeSpaceGB = [decimal]$ds.freeSpaceGB + [decimal]$record.provisionedSpaceGB
+                }
+            }
+            $removed += $record.name
+        }
+        if ($removed.Count -gt 0) {
+            $state.vms = @($state.vms | Where-Object { $removed -notcontains $_.name })
+            Save-FakeViState -State $state
+        }
+    }
+}
+
 Export-ModuleMember -Function @(
     'Connect-VIServer',
     'Disconnect-VIServer',
@@ -669,5 +741,7 @@ Export-ModuleMember -Function @(
     'Get-Datastore',
     'New-VM',
     'Set-VM',
-    'Start-VM'
+    'Start-VM',
+    'Stop-VM',
+    'Remove-VM'
 )
